@@ -8,7 +8,7 @@ RUN apk add --no-cache \
     sqlite-dev \
     libzip-dev \
     # Install PHP extensions required for Laravel/SQLite
-    && docker-php-ext-install pdo pdo_sqlite zip
+    && docker-php-ext-install pdo pdo_sqlite zip pcntl
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
