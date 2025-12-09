@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # 1. Laravel PHP-FPM Service (API)
+  app:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: ervinpap/laravel-app:latest # <--- ADD THIS
+    container_name: myhome-laravel
+    restart: unless-stopped
+    volumes:
+      - ./api:/var/www/html
+      # Persist SQLite file and logs
+      - ./api/database:/var/www/html/database
+      - ./api/storage:/var/www/html/storage
+    # No port mapping needed as Nginx proxies to it
+    depends_on:
+      - redis
+
+  # 2. Laravel Reverb WebSocket Server
+  reverb:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: ervinpap/laravel-reverb:latest # <--- ADD THIS
+    container_name: laravel-reverb
+    restart: unless-stopped
+    # Use the same image as the app and run the Reverb command
+    command: php artisan reverb:start --host=0.0.0.0 --port=8080
+    volumes:
+      - ./api:/var/www/html
+    # Expose Reverb port for Next.js frontend to connect (ws://host:8080)
+    ports:
+      - "8080:8080"
+    depends_on:
+      - app
+      - redis
+
+  # 3. Laravel Queue Worker Service
+  worker:
+    image: ervinpap/laravel-app:latest
+    container_name: laravel-worker
+    restart: unless-stopped
+    # Command to start the queue worker, connecting to the 'redis' service
+    command: php artisan queue:work redis --tries=3 --delay=3
+    volumes:
+      - ./api:/var/www/html
+    # Workers usually don't need exposed ports
+    depends_on:
+      - app
+      - redis
+
+  # 4. Next.js Frontend
+  nextjs:
+    build:
+      context: ./public
+    image: ervinpap/nextjs-frontend:latest # <--- ADD THIS
+    container_name: nextjs-frontend
+    restart: unless-stopped
+    # Map port 3000 for development or direct access/debugging
+    ports:
+      - "3000:3000"
+    environment:
+      # Ensure Next.js build is aware of the production host/port
+      - NODE_ENV=production
+      # Vercel/Next.js documentation recommends this for Docker
+      - NEXT_SHARP_DISABLE_CDN=1
+      # API and Reverb endpoints
+      - NEXT_PUBLIC_API_URL=http://nginx/api
+      - NEXT_PUBLIC_REVERB_HOST=REVERB_SERVER_HOST # Use the appropriate external host/IP, e.g., your Pi's IP
+      - NEXT_PUBLIC_REVERB_PORT=8080
+
+  # 5. Redis Cache/Broker (ARM64 compatible)
+  redis:
+    image: redis:alpine
+    container_name: redis-cache
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+
+volumes:
+  redisdata:

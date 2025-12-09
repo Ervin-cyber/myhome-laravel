@@ -1,0 +1,27 @@
+# Use a multi-stage build for a smaller final image
+# Stage 1: Build & Install dependencies
+FROM php:8.5-fpm-alpine AS base
+
+# Install necessary system dependencies (SQLite, Git, etc.)
+RUN apk add --no-cache \
+    git \
+    sqlite-dev \
+    libzip-dev \
+    # Install PHP extensions required for Laravel/SQLite
+    && docker-php-ext-install pdo pdo_sqlite zip
+
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Set working directory inside the container
+WORKDIR /var/www/html
+
+# Copy application files (excluding those in .dockerignore)
+COPY . .
+
+# Install PHP dependencies
+RUN composer install --no-dev --optimize-autoloader
+
+# Set appropriate permissions
+RUN chown -R www-data:www-data /var/www/html/storage \
+    && chmod -R 775 /var/www/html/storage
