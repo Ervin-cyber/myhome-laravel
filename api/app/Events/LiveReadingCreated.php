@@ -14,16 +14,20 @@ class LiveReadingCreated implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public $temperatureReading;
-    public $systemStateReading;
+    public $reading;
 
     public function __construct($reading)
     {
-        if ($reading instanceof TemperatureReading) {
-            $this->temperatureReading = $reading;
-        } else if ($reading instanceof SystemState) {
-            $this->systemStateReading = $reading;
-        }
+        $latestTemp = TemperatureReading::getLatestTemperature();
+        $systemState = SystemState::first();
+        
+        $this->reading = [
+            'temperature' => $latestTemp->value,
+            'last_updated' => $latestTemp->timestamp,
+            'heating_on' => boolval($systemState->heating_on),
+            'set_temp' => $systemState->target_temp,
+            'heating_until' => $systemState->heating_until,
+        ];
     }
 
     public function broadcastOn(): array

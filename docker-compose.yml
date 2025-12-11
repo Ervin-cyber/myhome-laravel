@@ -39,8 +39,10 @@ services:
     command: php artisan reverb:start --host=0.0.0.0 --port=8080
     volumes:
       - ./api:/var/www/html
-    expose:
-      - "8080"
+    #expose:
+    #  - "8080"
+    ports:
+    - "8081:8080"
     depends_on:
       - redis
     networks:

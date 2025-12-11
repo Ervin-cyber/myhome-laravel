@@ -11,11 +11,6 @@ export type Stat = {
     count_on: number;
 }
 
-export type TemperatureReading = {
-    value: number;
-    timestamp: number;
-}
-
 export type SystemState = {
     heating_on: number;
     target_temp: number;

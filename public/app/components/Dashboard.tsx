@@ -5,14 +5,10 @@ import { useEffect, useState } from 'react';
 import HeatingBorder from './HeatingBorder';
 import HeatingIcon from './HeatingOnIcon';
 import TempGauge from './TempGauge';
-import { Stat, SystemState, TemperatureReading } from '@/types/types';
+import { Stat, SystemState } from '@/types/types';
 import { signOut } from '../actions/auth';
 import { createEcho } from '@/lib/echo';
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus';
-
-export interface LiveReadingCreatedEvent {
-    reading: TemperatureReading;
-}
 
 const getHoursFromSeconds = (seconds: number) => {
     return Math.floor(seconds / 3600);
@@ -23,7 +19,7 @@ const getMinutesFromSeconds = (seconds: number) => {
 }
 
 export default function Dashboard() {
-    const [currentTemp, setCurrentTemp] = useState<TemperatureReading>();
+    const [currentTemp, setCurrentTemp] = useState<number>();
     const [heating, setHeating] = useState<boolean>(false);
     const [tempTimeStamp, setTempTimeStamp] = useState<Date | null>(null);
     const [targetTemp, setTargetTemp] = useState<number>(-1);
@@ -57,7 +53,8 @@ export default function Dashboard() {
 
         if (tempResult.status == 200) {
             const res = await tempResult.json();
-            setCurrentTemp(res);
+            setCurrentTemp(res?.value);
+            setTempTimeStamp(new Date(res?.timestamp))
         } else {
             console.error('Temperature fetch error!');
         }
@@ -83,14 +80,13 @@ export default function Dashboard() {
         if (echo) {
             echo.channel('live-updates')
                 .listen('.reading.created', (eventPayload: any) => {
-                    if (eventPayload?.temperatureReading) {
-                        setCurrentTemp(eventPayload.temperatureReading);
-                    }
-                    if (eventPayload?.systemStateReading) {
-                        const res = eventPayload.systemStateReading;
-                        setHeating(res?.heating_on ? true : false);
-                        setTargetTemp(res?.target_temp);
-                        setHeatingUntil(res?.heating_until ?? 0);
+                    if (eventPayload?.reading) {
+                        const payload = eventPayload?.reading;
+                        setCurrentTemp(payload?.temperature);
+                        setTempTimeStamp(new Date(payload?.last_updated));
+                        setHeating(payload?.heating_on ? true : false);
+                        setTargetTemp(payload?.target_temp);
+                        setHeatingUntil(payload?.heating_until ?? 0);
                     }
                 });
         }
@@ -167,12 +163,12 @@ export default function Dashboard() {
                             <div className="flex items-center gap-4 mb-6">
                                 <HeatingIcon size={48} isOn={heating} />
                                 <div className="text-5xl md:text-6xl font-light text-white">
-                                    {currentTemp?.value?.toFixed(2)}
+                                    {currentTemp?.toFixed(2)}
                                     <span className="text-3xl text-gray-400">°C</span>
                                 </div>
                             </div>
 
-                            {currentTemp ? <TempGauge temp={currentTemp?.value} target={targetTemp} isHeating={heating} /> : ''}
+                            {currentTemp ? <TempGauge temp={currentTemp} target={targetTemp} isHeating={heating} /> : ''}
 
                             <div className="flex justify-between mt-2 text-xs text-gray-500">
                                 <span>10°C</span>
