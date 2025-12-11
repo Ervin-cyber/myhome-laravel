@@ -10,7 +10,7 @@ class TemperatureController extends Controller
 {
     public function index()
     {
-        return TemperatureReading::orderBy('created_at', 'desc')->limit(50)->get();
+        return TemperatureReading::orderBy('timestamp', 'desc')->limit(50)->get();
     }
 
     public function getLatestTemperature()

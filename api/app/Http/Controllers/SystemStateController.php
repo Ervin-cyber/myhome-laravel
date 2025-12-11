@@ -17,13 +17,14 @@ class SystemStateController extends Controller
 
     public function update(SystemStateRequest $request)
     {
-        $heatingUntil = Arr::get($request, 'heating_until', null);
-        $heatingOn = Arr::get($request, 'heating_on', null);
+        $data = $request->validated();
+        $heatingUntil = $data['heating_until'] ?? null;
+        $heatingOn = $data['heating_on'] ?? null;
 
         if ($heatingUntil === 15 || $heatingUntil === 30) {
-            $heatingUntil = time() + (60 * $heatingUntil);
+            $data['heating_until'] = time() + (60 * $heatingUntil);
         } elseif ($heatingUntil > (time() + 3610)) {
-            $heatingUntil = 0;
+            $data['heating_until'] = 0;
         }
 
         $state = SystemState::firstOrCreate();
@@ -41,7 +42,7 @@ class SystemStateController extends Controller
             ]);
         }
 
-        $state->update($request->validated());
+        $state->update($data);
 
         return response()->json(['message' => "Success"], 200);
     }

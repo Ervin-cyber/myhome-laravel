@@ -27,6 +27,6 @@ class TemperatureReading extends Model
 
     public static function getLatestTemperature() 
     {
-        return TemperatureReading::orderBy('created_at', 'desc')->first();
+        return TemperatureReading::orderBy('timestamp', 'desc')->first();
     }
 }

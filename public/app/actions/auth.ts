@@ -17,10 +17,10 @@ export async function signIn(email: string, password: string) {
 
         if (data?.access_token) {
             const cookieStore = await cookies()
-
+            
             cookieStore.set('access_token', data.access_token, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
+                secure: false,//process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
                 maxAge: 60 * 60 * 24 * 1, // 1 week
                 path: '/',

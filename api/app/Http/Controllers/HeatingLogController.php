@@ -10,7 +10,7 @@ class HeatingLogController extends Controller
 {
     public function index()
     {
-        return HeatingLog::orderBy('created_at', 'desc')->limit(100)->get();
+        return HeatingLog::orderBy('timestamp', 'desc')->limit(100)->get();
     }
 
     public function store(Request $request)

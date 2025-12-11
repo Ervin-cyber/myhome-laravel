@@ -15,9 +15,14 @@ return [
     |
     */
 
-    'stateful' => explode(',', env(
+    /*'stateful' => explode(',', env(
         'SANCTUM_STATEFUL_DOMAINS',
         'localhost,localhost:8000,localhost:3000,127.0.0.1,127.0.0.1:8000'
+    )),*/
+    'stateful' => explode(',', env(
+        'SANCTUM_STATEFUL_DOMAINS',
+        // Ensure this list includes your public IP or references the ENV variable
+        '192.168.1.100,192.168.1.100:3000,localhost,nextjs,nextjs-frontend,nginx,nginx-proxy' 
     )),
 
     /*

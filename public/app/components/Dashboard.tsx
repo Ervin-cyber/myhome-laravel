@@ -8,10 +8,10 @@ import TempGauge from './TempGauge';
 import { Stat, SystemState, TemperatureReading } from '@/types/types';
 import { signOut } from '../actions/auth';
 import { createEcho } from '@/lib/echo';
+import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus';
 
-// Interface for the full event payload
 export interface LiveReadingCreatedEvent {
-    reading: TemperatureReading; // The key matches the public $reading property in PHP
+    reading: TemperatureReading;
 }
 
 const getHoursFromSeconds = (seconds: number) => {
@@ -35,7 +35,7 @@ export default function Dashboard() {
         let interval: NodeJS.Timeout;
         const fetchStats = async () => {
             try {
-                const response = await fetch('/api/stats');
+                const response = await fetch('/proxy/api/stats');
                 const res = await response.json();
                 setStats(res);
             } catch (err) {
@@ -51,8 +51,8 @@ export default function Dashboard() {
 
     const fetchData = async () => {
         const [tempResult, stateResult] = await Promise.all([
-            fetch('/api/temperature-latest'),
-            fetch('/api/state')
+            fetch('/proxy/api/temperature-latest'),
+            fetch('/proxy/api/state')
         ]);
 
         if (tempResult.status == 200) {
@@ -71,6 +71,8 @@ export default function Dashboard() {
             console.error('SystemState fetch error!');
         }
     }
+
+    useRefetchOnFocus(fetchData);
 
     useEffect(() => {
         fetchData();
@@ -106,7 +108,7 @@ export default function Dashboard() {
         }*/
         setSaving(true);
         try {
-            fetch('/api/state', {
+            fetch('/proxy/api/state', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -125,7 +127,6 @@ export default function Dashboard() {
 
     const handleSignOut = () => {
         signOut();
-        //router.push('/login');
     }
 
     return (

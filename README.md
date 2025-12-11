@@ -1,59 +1,27 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Home Climate Control System
 
-## Getting Started
+## 🌟 Application Features
 
-First, run the development server:
+This is a focused, real-time home climate management dashboard that provides secure access and immediate feedback on environmental conditions and heating controls.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-## drizzle SQLITE Database
-npx drizzle-kit generate
-npx drizzle-kit push
+* **Secure Dashboard:** Login protected via **Laravel Sanctum** token authentication.
+* **Live Temperature Monitoring:** Real-time display of current temperature data using **Laravel Reverb** (WebSockets) and **Laravel Echo**.
+* **Target Temperature Control:**
+    * **Quick Set:** One-click presets for common target temperatures (e.g., 20°C, 22°C).
+    * **Custom Set:** Ability to set and persist any desired thermostat temperature.
+* **Boost Functionality:** Quick, temporary heating override for fixed periods (15 or 30 minutes).
+* **Daily Statistics:** Display of key environmental and usage metrics:
+    * Minimum, Maximum, and Average Temperature.
+    * Total runtime of the heating system in the last 24 hours.
+    * Heating system cycle counter (how many times it was turned on).
 
-## django 
-python manage.py makemigrations
-python manage.py migrate
+## 🚀 Technical Architecture
 
-## Dockerfile
-# 1. Build stage
-FROM node:20-alpine AS builder
-WORKDIR /app
+This project is built on a high-performance, containerized, and decoupled architecture.
 
-COPY package*.json ./
-RUN npm install
-
-COPY . .
-RUN npm run build
-
-# 2. Production stage
-FROM node:20-alpine
-WORKDIR /app
-
-COPY --from=builder /app ./
-
-ENV NODE_ENV production
-EXPOSE 3000
-
-CMD ["npm", "start"]
-
-## PC
-docker buildx create --use
-docker buildx build --platform linux/arm64 -t myhome:pi --load .
-
-docker tag myhome:pi ervinpap/myhome:pi
-docker push ervinpap/myhome:pi
-
-## PI
-docker pull ervinpap/myhome:pi
-docker run -p 3000:3000 ervinpap/myhome:pi
-
-php artisan migrate:fresh --seed
-
-
+| Component | Technology | Role |
+| :--- | :--- | :--- |
+| **Frontend** | **Next.js** | Handles the user dashboard, provides optimal performance, and consumes the Laravel API. |
+| **Backend API** | **Laravel** | Manages all business logic, data persistence (statistics), and secure API endpoints. |
+| **Real-Time** | **Laravel Reverb** & **Echo** | Provides low-latency WebSockets for instant temperature and state updates to the dashboard. |
+| **Deployment** | **Docker** & **Nginx** | Ensures consistent development and production environments, with Nginx acting as a reverse proxy for all services. |

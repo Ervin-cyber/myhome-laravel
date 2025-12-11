@@ -1,99 +1,99 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:alpine
+    container_name: myhome-redis
+    restart: unless-stopped
+    expose:
+      - "6379"
+    networks:
+      - app-network
+
   # 1. Laravel PHP-FPM Service (API)
-  app:
+  laravel:
     build:
       context: ./api
       dockerfile: Dockerfile
-    image: ervinpap/laravel-app:latest # <--- ADD THIS
+    image: ervinpap/laravel:latest
     container_name: myhome-laravel
     restart: unless-stopped
     volumes:
       - ./api:/var/www/html
-      # Persist SQLite file and logs
       - ./api/database:/var/www/html/database
       - ./api/storage:/var/www/html/storage
-    # No port mapping needed as Nginx proxies to it
+    user: root
+    entrypoint: sh -c "chown -R www-data:www-data /var/www/html && php-fpm"
     depends_on:
       - redis
+    networks:
+      - app-network
 
   # 2. Laravel Reverb WebSocket Server
   reverb:
     build:
       context: ./api
       dockerfile: Dockerfile
-    image: ervinpap/laravel-reverb:latest # <--- ADD THIS
     container_name: laravel-reverb
     restart: unless-stopped
-    # Use the same image as the app and run the Reverb command
     command: php artisan reverb:start --host=0.0.0.0 --port=8080
     volumes:
       - ./api:/var/www/html
-    # Expose Reverb port for Next.js frontend to connect (ws://host:8080)
-    ports:
-      - "8081:8080"
+    expose:
+      - "8080"
     depends_on:
-      - app
       - redis
+    networks:
+      - app-network
 
-  # 3. Laravel Queue Worker Service
+  # 3. Laravel Queue Worker (Standard Config)
   worker:
-    image: ervinpap/laravel-app:latest
+    build:
+      context: ./api
+      dockerfile: Dockerfile
     container_name: laravel-worker
     restart: unless-stopped
-    # Command to start the queue worker, connecting to the 'redis' service
     command: php artisan queue:work redis --tries=3 --delay=3
     volumes:
       - ./api:/var/www/html
-    # Workers usually don't need exposed ports
     depends_on:
-      - app
       - redis
+    networks:
+      - app-network
 
-  # 3. Nginx Web Server (Proxy/Entrypoint)
+  # 4. Nginx Web Server (Proxy/Entrypoint)
   nginx:
-    # Nginx Alpine supports arm64
     image: nginx:alpine
     container_name: nginx-proxy
     restart: unless-stopped
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
-      # Optional: Serve Next.js static files through Nginx if not using node:3000 directly
     ports:
-      - "80:80" # Expose HTTP port
+      - "80:80"
     depends_on:
-      - app
-      - nextjs
+      laravel:
+        condition: service_started
+      nextjs:
+        condition: service_started
+    networks:
+    - app-network
 
-  # 4. Next.js Frontend
+  # 5. Next.js Frontend
   nextjs:
     build:
       context: ./public
-    image: ervinpap/nextjs-frontend:latest # <--- ADD THIS
+    image: ervinpap/nextjs-frontend:latest 
     container_name: nextjs-frontend
     restart: unless-stopped
-    # Map port 3000 for development or direct access/debugging
-    ports:
-      - "3000:3000"
     environment:
-      # Ensure Next.js build is aware of the production host/port
+      - HOST=0.0.0.0
       - NODE_ENV=production
-      # Vercel/Next.js documentation recommends this for Docker
-      - NEXT_SHARP_DISABLE_CDN=1
-      # API and Reverb endpoints
-      - NEXT_PUBLIC_API_URL=http://nginx/api
-      - NEXT_PUBLIC_REVERB_HOST=REVERB_SERVER_HOST # Use the appropriate external host/IP, e.g., your Pi's IP
-      - NEXT_PUBLIC_REVERB_PORT=8080
-
-  # 5. Redis Cache/Broker (ARM64 compatible)
-  redis:
-    image: redis:alpine
-    container_name: redis-cache
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redisdata:/data
+    networks:
+      - app-network
 
 volumes:
   redisdata:
+
+networks:
+  app-network:
+    driver: bridge
