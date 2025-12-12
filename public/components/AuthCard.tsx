@@ -1,23 +1,17 @@
 "use client";
 
-import React, { useState, ChangeEvent, MouseEventHandler, JSX, FormEvent } from 'react';
-import { motion } from 'framer-motion';
-import { Button, Stack, TextField, Typography } from '@mui/material';
-import HeatingIcon from './HeatingOnIcon';
+import { FormEvent, JSX, useState } from 'react';
 import { signIn } from '../actions/auth';
+import HeatingIcon from './HeatingOnIcon';
+import { useNotification } from '@/context/NotificationContext';
 
 export default function AuthCard(): JSX.Element {
+    const { showNotification } = useNotification();
+
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [rememberMe, setRememberMe] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
-    const [error, setError] = useState<string>('');
-
-    const handleError = (msg: string) => {
-        setError(msg);
-        setTimeout(() => setError(''), 6000);
-    };
 
     const handleSubmit = async (e: FormEvent<HTMLButtonElement>): Promise<void> => {
         e.preventDefault();
@@ -25,7 +19,7 @@ export default function AuthCard(): JSX.Element {
         try {
             await signIn(email, password)
         } catch (e: unknown) {
-            if (e instanceof Error && e.message != 'NEXT_REDIRECT') handleError(e.message);
+            if (e instanceof Error && e.message != 'NEXT_REDIRECT') showNotification('Invalid Credentials!', 'error');
         } finally {
             setTimeout(() => setIsLoading(false), 1);
         }
@@ -33,13 +27,6 @@ export default function AuthCard(): JSX.Element {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
-            <div className="absolute top-4 left-0 right-0 flex justify-center">
-                {error && (
-                    <div className="bg-red-500 text-white px-4 py-2 rounded-xl shadow text-sm">
-                        {error}
-                    </div>
-                )}
-            </div>
             {/* Ambient glow */}
             <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-orange-500/20 rounded-full blur-3xl pointer-events-none" />
 

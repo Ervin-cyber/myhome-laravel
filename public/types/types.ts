@@ -16,3 +16,13 @@ export type SystemState = {
     target_temp: number;
     heating_until: number;
 }
+
+export type UpdatePayload = {
+    reading: {
+        temperature: number;
+        last_updated: string;
+        heating_on: boolean;
+        set_temp: number;
+        heating_until: number;
+    }
+}

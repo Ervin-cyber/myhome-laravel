@@ -12,7 +12,7 @@ export default function FloatingParticles(): JSX.Element {
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {[...Array(25)].map((_, i) => (    
+      {[...Array(25)].map((_, i) => (
         <div
           key={i}
           className="absolute rounded-full"

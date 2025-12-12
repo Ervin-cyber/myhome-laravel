@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AppRouterCacheProvider } from "@mui/material-nextjs/v13-appRouter";
+import FloatingParticles from "../components/FloatingParticles";
+import { NotificationProvider } from "@/context/NotificationContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,7 +30,10 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       ><AppRouterCacheProvider>
-          {children}
+          <NotificationProvider>
+            <FloatingParticles />
+            {children}
+          </NotificationProvider>
         </AppRouterCacheProvider>
       </body>
     </html>

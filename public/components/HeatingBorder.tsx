@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { JSX, useEffect, useState } from "react";
 
-export default function HeatingBorder({ children, isOn = true, borderRadius = 16 }) {
+export default function HeatingBorder({ children, isOn = true, borderRadius = 16 }: { children: JSX.Element, isOn: boolean, borderRadius: number }) {
   const [pulse, setPulse] = useState(0);
   useEffect(() => {
     if (!isOn) return;
@@ -21,7 +21,7 @@ export default function HeatingBorder({ children, isOn = true, borderRadius = 16
           boxShadow: `0 0 15px rgba(255, 100, 0, ${0.4 + glow * 0.3}), 0 0 30px rgba(255, 50, 0, ${0.2 + glow * 0.15})`
         } : { border: '3px solid #333' })
       }} />
-      {isOn && [0, 1, 2, 3].map(c => (
+      {!!isOn && [0, 1, 2, 3].map(c => (
         <div key={c} className="absolute w-24 h-24 pointer-events-none" style={{
           top: c < 2 ? borderRadius / 2 : 'auto', bottom: c >= 2 ? borderRadius / 2 : 'auto',
           left: c % 2 === 0 ? borderRadius / 2 : 'auto', right: c % 2 === 1 ? borderRadius / 2 : 'auto',

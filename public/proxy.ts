@@ -36,7 +36,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   } else if (!accessToken) {
     const data = {
-      'error': 'Unauthenticateddd!'
+      'error': 'Unauthenticated!'
     }
     return new Response(JSON.stringify(data), {
       status: 400,
