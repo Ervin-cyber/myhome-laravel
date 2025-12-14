@@ -30,8 +30,8 @@ export async function proxy(req: NextRequest) {
 
   const accessToken = req.cookies.get('access_token')?.value;
 
-  // No access token → redirect to login
-  if (!accessToken && !path.startsWith('/api')) {
+  // No access token and not api request → redirect to login
+  if (!accessToken && !path.startsWith('/proxy/api')) {
     url.pathname = '/login';
     return NextResponse.redirect(url);
   } else if (!accessToken) {
@@ -39,7 +39,7 @@ export async function proxy(req: NextRequest) {
       'error': 'Unauthenticated!'
     }
     return new Response(JSON.stringify(data), {
-      status: 400,
+      status: 401,
       headers: { "Content-Type": "application/json" },
     })
   }

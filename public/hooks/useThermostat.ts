@@ -1,8 +1,8 @@
 import { createEcho } from '@/lib/echo';
 import { Stat } from '@/types/types';
 import { useState, useEffect, useCallback } from 'react';
-import { fetchLatestData, fetchStats, updateState } from '../services/thermostatApi';
 import { useRefetchOnFocus } from './useRefetchOnFocus';
+import { useNotification } from '@/context/NotificationContext';
 
 interface ThermostatData {
     currentTemp: number;
@@ -13,6 +13,8 @@ interface ThermostatData {
 }
 
 export function useThermostat() {
+    const { showNotification } = useNotification();
+
     const [data, setData] = useState<ThermostatData>({
         currentTemp: 0,
         targetTemp: -1,
@@ -20,7 +22,6 @@ export function useThermostat() {
         heatingUntil: 0,
         lastUpdated: null,
     });
-    
     const [stats, setStats] = useState<Stat | undefined>();
     const [isSaving, setIsSaving] = useState(false);
 
@@ -84,7 +85,7 @@ export function useThermostat() {
         setIsSaving(true);
         try {
             setData(prev => ({ ...prev, targetTemp: val, heatingUntil: until }));
-            
+
             await updateState(val, until);
         } catch (error) {
             console.error(error);
@@ -93,11 +94,55 @@ export function useThermostat() {
         }
     };
 
-    return { 
-        data, 
-        stats, 
-        isSaving, 
+    const fetchClient = async (url: string, options: RequestInit = {}) => {
+        const response = await fetch(url, options);
+
+        if (response.status === 401) {
+            showNotification('Session expired! Please login.', 'error');
+            setTimeout(() => {
+                if (typeof window !== 'undefined') {
+                    window.location.href = '/login';
+                }
+            }, 5000);
+            throw new Error('Unauthorized');
+        }
+
+        return response;
+    };
+
+    const fetchStats = async (): Promise<Stat> => {
+        const res = await fetchClient('/proxy/api/stats');
+        if (!res.ok) throw new Error('Failed to fetch stats');
+        return res.json();
+    };
+
+    const fetchLatestData = async () => {
+        const [tempResult, stateResult] = await Promise.all([
+            fetchClient('/proxy/api/temperature-latest'),
+            fetchClient('/proxy/api/state')
+        ]);
+
+        const temp = tempResult.ok ? await tempResult.json() : null;
+        const state = stateResult.ok ? await stateResult.json() : null;
+
+        return { temp, state };
+    };
+
+    const updateState = async (targetTemp: number, heatingUntil: number) => {
+        const res = await fetchClient('/proxy/api/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ "target_temp": targetTemp, "heating_until": heatingUntil }),
+        });
+        if (!res.ok) throw new Error('Failed to save state');
+        return res.json();
+    };
+
+    return {
+        data,
+        stats,
+        isSaving,
         saveState,
-        refreshData 
+        refreshData
     };
 }
