@@ -22,7 +22,7 @@ export async function signIn(email: string, password: string) {
                 httpOnly: true,
                 secure: false,//process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
-                maxAge: 60 * 60 * 24 * 1, // 1 week
+                maxAge: 60 * 60 * 24 * 14, // 2 week
                 path: '/',
             })
             redirect('/dashboard');
