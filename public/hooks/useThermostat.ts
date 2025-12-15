@@ -1,6 +1,6 @@
 import { createEcho } from '@/lib/echo';
 import { Stat } from '@/types/types';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRefetchOnFocus } from './useRefetchOnFocus';
 import { useNotification } from '@/context/NotificationContext';
 
@@ -14,6 +14,7 @@ interface ThermostatData {
 
 export function useThermostat() {
     const { showNotification } = useNotification();
+    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     const [data, setData] = useState<ThermostatData>({
         currentTemp: 0,
@@ -86,7 +87,13 @@ export function useThermostat() {
         try {
             setData(prev => ({ ...prev, targetTemp: val, heatingUntil: until }));
 
-            await updateState(val, until);
+            if (timeoutRef?.current) {
+                clearTimeout(timeoutRef.current);
+            }
+
+            timeoutRef.current = setTimeout(() => {
+                updateState(val, until);
+            }, 1000);
         } catch (error) {
             console.error(error);
         } finally {
