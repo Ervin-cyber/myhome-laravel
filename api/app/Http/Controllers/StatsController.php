@@ -16,7 +16,9 @@ class StatsController extends Controller
             MIN(value) as temp_min,
             MAX(value) as temp_max,
             AVG(value) as temp_avg
-        ')->first();
+        ')
+        ->where('timestamp', '>=', now()->subHours(24))
+        ->first();
 
         $run_time = HeatingLog::where('timestamp', '>=', now()->subHours(24))
             ->sum('run_time');
