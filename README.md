@@ -3,8 +3,8 @@
 ## 📸 Screenshots
 
 <img width="305" height="628" alt="image" src="https://github.com/user-attachments/assets/d9c376da-241f-466f-a674-027ea76d6ae2" />
-<img width="306" height="627" alt="image" src="https://github.com/user-attachments/assets/c821d56c-4b8e-41fe-bc27-fcbc724abf8f" />
-<img width="353" height="731" alt="image" src="https://github.com/user-attachments/assets/f8a33184-3a05-4683-aecd-a9c07936478a" />
+<img width="305" height="628" alt="image" src="https://github.com/user-attachments/assets/c821d56c-4b8e-41fe-bc27-fcbc724abf8f" />
+<img width="305" height="628" alt="image" src="https://github.com/user-attachments/assets/f8a33184-3a05-4683-aecd-a9c07936478a" />
 
 ## 🌟 Application Features
 
