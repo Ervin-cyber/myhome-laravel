@@ -93,7 +93,7 @@ export function useThermostat() {
 
             timeoutRef.current = setTimeout(() => {
                 updateState(val, until);
-            }, 1000);
+            }, 300);
         } catch (error) {
             console.error(error);
         } finally {
