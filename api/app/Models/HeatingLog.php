@@ -14,7 +14,7 @@ class HeatingLog extends Model
 
     protected $keyType = 'integer';
 
-    protected $fillable = ['from_state', 'to_state', 'run_time', 'created_by', 'updated_by'];
+    protected $fillable = ['from_state', 'to_state', 'run_time'];
 
     public $timestamps = false;
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\TemperatureReading;
 use Illuminate\Http\Request;
+use App\Http\Requests\TemperatureRequest;
 use Illuminate\Support\Arr;
 
 class TemperatureController extends Controller
@@ -18,15 +19,9 @@ class TemperatureController extends Controller
         return response()->json(TemperatureReading::getLatestTemperature(), 200);
     }
 
-    public function store(Request $request)
+    public function store(TemperatureRequest $request)
     {
-        $temperature = Arr::get($request, 'value', -1);
-
-        if (empty($temperature) || $temperature > 40 || $temperature < 0) {
-            return response()->json(['message' => "Wrong temperature"], 500);
-        }
-
-        TemperatureReading::create(['value' => $temperature]);
+        TemperatureReading::create($request->validated());
 
         return response()->json(['message' => "Success"], 200);
     }

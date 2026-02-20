@@ -14,7 +14,7 @@ class SystemState extends Model
 
     protected $keyType = 'integer';
 
-    protected $fillable = ['target_temp', 'heating_until', 'heating_on', 'created_by', 'updated_by'];
+    protected $fillable = ['target_temp', 'heating_until', 'heating_on'];
 
     public $timestamps = false;
 

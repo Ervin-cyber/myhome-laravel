@@ -52,7 +52,7 @@ export async function proxy(req: NextRequest) {
         credentials: 'include',
         method: 'POST',
         headers: {
-          'Referer': 'http://192.168.1.100',
+          'Referer': `${process.env.API_BASE_URL}`
           Authorization: `Bearer ${accessToken}`,
           Accept: 'application/json'
         },

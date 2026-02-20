@@ -15,7 +15,7 @@ class TemperatureReading extends Model
 
     protected $keyType = 'integer';
 
-    protected $fillable = ['value', 'created_by', 'updated_by'];
+    protected $fillable = ['value', 'device', 'rssi'];
 
     public $timestamps = false;
 
