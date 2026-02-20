@@ -1,16 +1,8 @@
 import { createEcho } from '@/lib/echo';
-import { Stat } from '@/types/types';
+import { FetchLatestDataResponse, LiveReadingEvent, Stat, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRefetchOnFocus } from './useRefetchOnFocus';
 import { useNotification } from '@/context/NotificationContext';
-
-interface ThermostatData {
-    currentTemp: number;
-    targetTemp: number;
-    heating: boolean;
-    heatingUntil: number;
-    lastUpdated: Date | null;
-}
 
 export function useThermostat() {
     const { showNotification } = useNotification();
@@ -26,7 +18,7 @@ export function useThermostat() {
     const [stats, setStats] = useState<Stat | undefined>();
     const [isSaving, setIsSaving] = useState(false);
 
-    const processUpdate = useCallback((tempData: any, stateData: any) => {
+    const processUpdate = useCallback((tempData: TemperatureResponse, stateData: SystemStateResponse) => {
         setData(prev => ({
             ...prev,
             currentTemp: tempData?.value ?? prev.currentTemp,
@@ -43,7 +35,9 @@ export function useThermostat() {
             setStats(newStats);
 
             const { temp, state } = await fetchLatestData();
-            processUpdate(temp, state);
+             if (temp && state) {
+                processUpdate(temp, state);
+             }
         } catch (error) {
             console.error("Failed to refresh data", error);
         }
@@ -61,7 +55,7 @@ export function useThermostat() {
         const echo = createEcho();
         if (echo) {
             echo.channel('live-updates')
-                .listen('.reading.created', (event: any) => {
+                .listen('.reading.created', (event: LiveReadingEvent) => {
                     const r = event?.reading;
                     if (r) {
                         setData({
@@ -123,7 +117,7 @@ export function useThermostat() {
         return res.json();
     };
 
-    const fetchLatestData = async () => {
+    const fetchLatestData = async (): Promise<FetchLatestDataResponse> => {
         const [tempResult, stateResult] = await Promise.all([
             fetchClient('/proxy/api/temperature-latest'),
             fetchClient('/proxy/api/state')

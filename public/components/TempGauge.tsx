@@ -1,4 +1,6 @@
-export default function TempGauge({ temp, target, isHeating }: { temp: number, target: number, isHeating: boolean }) {
+import { TempGaugeProps } from "@/types/components";
+
+export default function TempGauge({ temp, target, isHeating }: TempGaugeProps) {
     const percentage = Math.min(100, Math.max(0, ((temp - 10) / 21) * 100));
     const targetPercentage = Math.min(100, Math.max(0, ((target - 10) / 21) * 100));
 

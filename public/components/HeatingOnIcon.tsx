@@ -1,6 +1,7 @@
+import { HeatingIconProps } from "@/types/components";
 import { useEffect, useState } from "react";
 
-export default function HeatingIcon({ size = 32, isOn = true, className = '' }) {
+export default function HeatingIcon({ size , isOn, className } : HeatingIconProps) {
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
