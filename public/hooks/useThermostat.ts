@@ -12,6 +12,8 @@ export function useThermostat() {
         currentTemp: 0,
         targetTemp: -1,
         heating: false,
+        cooling: false,
+        mode: 'heating',
         heatingUntil: 0,
         lastUpdated: null,
     });
@@ -24,6 +26,8 @@ export function useThermostat() {
             currentTemp: tempData?.value ?? prev.currentTemp,
             lastUpdated: tempData?.timestamp ? new Date(tempData.timestamp) : prev.lastUpdated,
             heating: stateData?.heating_on ?? prev.heating,
+            cooling: stateData?.cooling_on ?? prev.cooling,
+            mode: stateData?.mode ?? prev.mode,
             targetTemp: stateData?.target_temp ?? prev.targetTemp,
             heatingUntil: stateData?.heating_until ?? prev.heatingUntil,
         }));
@@ -62,6 +66,8 @@ export function useThermostat() {
                             currentTemp: r.temperature,
                             lastUpdated: new Date(r.last_updated),
                             heating: r.heating_on,
+                            cooling: r.cooling_on ?? false,
+                            mode: r.mode ?? 'heating',
                             targetTemp: r.set_temp,
                             heatingUntil: r.heating_until ?? 0
                         });
@@ -129,14 +135,32 @@ export function useThermostat() {
         return { temp, state };
     };
 
-    const updateState = async (targetTemp: number, heatingUntil: number) => {
+    const updateState = async (targetTemp: number, heatingUntil: number, mode: 'heating' | 'cooling' = 'heating') => {
         const res = await fetchClient('/proxy/api/state', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ "target_temp": targetTemp, "heating_until": heatingUntil }),
+            body: JSON.stringify({ "target_temp": targetTemp, "heating_until": heatingUntil, "mode": mode }),
         });
         if (!res.ok) throw new Error('Failed to save state');
         return res.json();
+    };
+
+    const toggleMode = async () => {
+        const newMode: 'heating' | 'cooling' = data.mode === 'heating' ? 'cooling' : 'heating';
+        setIsSaving(true);
+        try {
+            await updateState(data.targetTemp, data.heatingUntil, newMode);
+            setData(prev => ({
+                ...prev,
+                mode: newMode,
+                heating: newMode === 'heating' ? prev.heating : false,
+                cooling: newMode === 'cooling' ? prev.cooling : false,
+            }));
+        } catch (error) {
+            console.error('Failed to toggle mode', error);
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     return {
@@ -144,6 +168,7 @@ export function useThermostat() {
         stats,
         isSaving,
         saveState,
-        refreshData
+        refreshData,
+        toggleMode
     };
 }

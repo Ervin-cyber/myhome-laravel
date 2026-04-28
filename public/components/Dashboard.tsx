@@ -1,6 +1,7 @@
 "use client";
 
 import { formatDate, formatTime, getHoursFromSeconds, getMinutesFromSeconds } from '@/lib/utils';
+import { getThemeColors } from '@/lib/themeColors';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { JSX } from 'react';
 import { signOut } from '../actions/auth';
@@ -10,11 +11,14 @@ import HeatingIcon from './HeatingOnIcon';
 import StatCard from './StatCard';
 import TempGauge from './TempGauge';
 import LoadingSpinner from './LoadingSpinner';
+import ModeToggle from './ModeToggle';
 
 export default function Dashboard(): JSX.Element {
-    const { data, stats, isSaving, saveState } = useThermostat();
+    const { data, stats, isSaving, saveState, toggleMode } = useThermostat();
 
-    const { currentTemp, targetTemp, heating, heatingUntil, lastUpdated } = data;
+    const { currentTemp, targetTemp, heating, cooling, mode, heatingUntil, lastUpdated } = data;
+    const colors = getThemeColors(mode);
+    const isActive = (mode === 'heating' && heating) || (mode === 'cooling' && cooling);
 
     const quickTemps = [19, 20, 21, 22];
 
@@ -30,20 +34,28 @@ export default function Dashboard(): JSX.Element {
 
     return (
         <div className="min-h-screen min-w-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-4 md:p-8">
-            <HeatingBorder isOn={heating} borderRadius={24}>
+            <HeatingBorder isOn={isActive} borderRadius={24}>
                 <div className="p-3 md:p-8 opacity-90">
                     <div className="flex justify-between gap-4 mb-3">
                         <div className="relative w-full flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
-                                <HeatingIcon size={28} isOn={heating} />
+                            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colors.gradient} flex items-center justify-center shadow-lg ${colors.shadowColor}/30`}>
+                                <HeatingIcon size={28} isOn={isActive} />
                             </div>
                             <div>
-                                <h1 className="text-xl md:text-2xl font-bold text-white">Temperature Monitor</h1>
+                                <h1 className={`text-xl md:text-2xl font-bold text-white ${colors.text}`}>Temperature Monitor</h1>
                                 <p className="text-gray-400 text-sm">Realtime data</p>
                             </div>
-                            <button className="absolute right-0 px-2 py-2 rounded-lg bg-gray-700/50 hover:bg-gray-600/50 text-blue-400 font-medium transition-all" onClick={() => signOut()}>
-                                <LogoutIcon />
-                            </button>
+                            
+                            <div className="absolute right-0 flex items-center gap-3">
+                                <ModeToggle 
+                                    mode={mode}
+                                    onToggle={toggleMode}
+                                    disabled={isSaving}
+                                />
+                                <button className="px-2 py-2 rounded-lg bg-gray-700/50 hover:bg-gray-600/50 text-blue-400 font-medium transition-all" onClick={() => signOut()}>
+                                    <LogoutIcon />
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -60,7 +72,9 @@ export default function Dashboard(): JSX.Element {
                             </div>
 
                             <div className="flex items-center gap-4 mb-6">
-                                <HeatingIcon size={48} isOn={heating} />
+                                <div className={`text-5xl ${colors.text}`}>
+                                    {mode === 'heating' ? '🔥' : '❄️'}
+                                </div>
                                 <div className="text-5xl md:text-6xl font-light text-white">
                                     {currentTemp?.toFixed(2)}
                                     <span className="text-3xl text-gray-400">°C</span>
@@ -75,9 +89,14 @@ export default function Dashboard(): JSX.Element {
                                 <span>30°C</span>
                             </div>
 
-                            <div className={`mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${heating ? 'bg-orange-500/20 text-orange-400' : 'bg-green-500/20 text-green-400'}`}>
-                                <span className={`w-2 h-2 rounded-full ${heating ? 'bg-orange-400 animate-pulse' : 'bg-green-400'}`} />
-                                {heating ? 'Heating...' : 'Target Reached'}
+                            <div className={`mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${isActive 
+                                ? `${colors.text} ${mode === 'heating' ? 'bg-orange-500/20' : 'bg-blue-500/20'}` 
+                                : 'bg-green-500/20 text-green-400'}`}>
+                                <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-current animate-pulse' : 'bg-green-400'}`} />
+                                {mode === 'heating' 
+                                    ? (heating ? '🔥 Fűtés aktív' : 'Fűtés kikapcsolva')
+                                    : (cooling ? '❄️ Hűtés aktív' : 'Hűtés kikapcsolva')
+                                }
                             </div>
                         </div>
 
@@ -110,7 +129,7 @@ export default function Dashboard(): JSX.Element {
                                 <button key={i} onClick={() => saveState(t, heatingUntil)}
                                     disabled={isSaving}
                                     className={`py-3 rounded-xl font-medium transition-all active:scale-95 ${targetTemp === t
-                                        ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg shadow-orange-500/25'
+                                        ? `bg-gradient-to-r ${colors.gradient} text-white shadow-lg ${colors.shadowColor}/25`
                                         : 'bg-gray-700/50 hover:bg-gray-600/50 text-gray-300 border border-gray-600/50'}`}>
                                     {t}°C
                                 </button>

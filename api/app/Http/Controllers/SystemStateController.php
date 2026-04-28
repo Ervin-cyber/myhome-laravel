@@ -28,21 +28,64 @@ class SystemStateController extends Controller
         }
 
         $state = SystemState::firstOrCreate();
+        $oldState = $state->replicate();
 
-        if ($heatingOn !== null && $state->heating_on != $heatingOn) {
-            $lastLog = HeatingLog::orderByDesc('timestamp')->first();
+        // Mode switching logic
+        if (isset($data['mode'])) {
+            $state->mode = $data['mode'];
+            
+            // If switching to cooling, disable heating
+            if ($data['mode'] === 'cooling') {
+                $state->heating_on = false;
+                if (isset($data['cooling_on'])) {
+                    $state->cooling_on = $data['cooling_on'];
+                }
+            }
+            // If switching to heating, disable cooling
+            elseif ($data['mode'] === 'heating') {
+                $state->cooling_on = false;
+                if (isset($data['heating_on'])) {
+                    $state->heating_on = $data['heating_on'];
+                }
+            }
+        }
 
+        // Temperature setting
+        if (isset($data['target_temp'])) {
+            $state->target_temp = $data['target_temp'];
+        }
+
+        if (isset($data['heating_until'])) {
+            $state->heating_until = $data['heating_until'];
+        }
+
+        // Heating on/off (only if in heating mode)
+        if (isset($data['heating_on']) && $state->mode === 'heating') {
+            $state->heating_on = $data['heating_on'];
+        }
+
+        // Cooling on/off (only if in cooling mode)
+        if (isset($data['cooling_on']) && $state->mode === 'cooling') {
+            $state->cooling_on = $data['cooling_on'];
+        }
+
+        // Log state changes
+        if ($oldState->heating_on != $state->heating_on || 
+            $oldState->cooling_on != $state->cooling_on) {
+            
+            $fromState = $oldState->heating_on ? 'heating_on' : 
+                        ($oldState->cooling_on ? 'cooling_on' : 'off');
+            $toState = $state->heating_on ? 'heating_on' : 
+                      ($state->cooling_on ? 'cooling_on' : 'off');
+            
             HeatingLog::create([
-                'from_state' => $state->heating_on,
-                'to_state'   => $heatingOn,
-                'run_time'   => $state->heating_on
-                    ? time() - strtotime(optional($lastLog)->timestamp)
-                    : 0,
-                'timestamp'  => time(),
+                'from_state' => $fromState,
+                'to_state' => $toState,
+                'run_time' => $state->heating_until ?? 0,
             ]);
         }
 
-        $state->update($data);
+        $state->save();
 
         return response()->json(['message' => "Success"], 200);
     }
