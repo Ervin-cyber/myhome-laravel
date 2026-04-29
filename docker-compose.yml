@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:alpine
@@ -22,6 +20,7 @@ services:
       - ./api:/var/www/html
       - ./api/database:/var/www/html/database
       - ./api/storage:/var/www/html/storage
+      - /var/www/html/vendor
     user: root
     entrypoint: sh -c "chown -R www-data:www-data /var/www/html && php-fpm"
     depends_on:
@@ -39,6 +38,7 @@ services:
     command: php artisan reverb:start --host=0.0.0.0 --port=8080
     volumes:
       - ./api:/var/www/html
+      - /var/www/html/vendor
     #expose:
     #  - "8080"
     ports:
@@ -58,6 +58,7 @@ services:
     command: php artisan queue:work redis --tries=3 --delay=3
     volumes:
       - ./api:/var/www/html
+      - /var/www/html/vendor
     depends_on:
       - redis
     networks:
