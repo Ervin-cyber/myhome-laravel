@@ -33,6 +33,12 @@ jobs:
         working-directory: ./api
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
+      - name: Prepare Laravel Environment
+        working-directory: ./api
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
       - name: Run PHP tests
         working-directory: ./api
         run: composer test
