@@ -10,7 +10,7 @@ on:
 
 env:
   NODE_VERSION: '20'
-  PHP_VERSION: '8.2'
+  PHP_VERSION: '8.4'
   DOCKER_REGISTRY: 'docker.io'
   IMAGE_NAMESPACE: '${{ secrets.DOCKERHUB_USERNAME }}'
 
