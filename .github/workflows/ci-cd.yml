@@ -1,0 +1,87 @@
+name: CI / CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  NODE_VERSION: '20'
+  PHP_VERSION: '8.2'
+  DOCKER_REGISTRY: 'docker.io'
+  IMAGE_NAMESPACE: '${{ secrets.DOCKERHUB_USERNAME }}'
+
+jobs:
+  test:
+    name: Run tests and build frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v4
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, pdo, pdo_sqlite, zip
+          ini-values: post_max_size=256M, upload_max_filesize=256M
+
+      - name: Install PHP dependencies
+        working-directory: ./api
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Run PHP tests
+        working-directory: ./api
+        run: composer test
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install frontend dependencies
+        working-directory: ./public
+        run: npm ci
+
+      - name: Build Next.js app
+        working-directory: ./public
+        run: npm run build
+
+  build-and-push:
+    name: Build and publish Docker images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and push Laravel app image
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/laravel:latest \
+            --tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/laravel:${{ github.sha }} \
+            --push \
+            -f api/Dockerfile ./api
+
+      - name: Build and push Next.js frontend image
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:latest \
+            --tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:${{ github.sha }} \
+            --push \
+            -f public/Dockerfile ./public
