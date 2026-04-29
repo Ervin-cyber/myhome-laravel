@@ -33,14 +33,12 @@ jobs:
         working-directory: ./api
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
-      - name: Prepare Laravel Environment
-        working-directory: ./api
-        run: |
-          cp .env.example .env
-          php artisan key:generate
-
       - name: Run PHP tests
         working-directory: ./api
+        env:
+          APP_KEY: base64:uS38FzS7S8R3XpYJz8x5W6V7U8T9S0R1Q2P3O4N5M6L=
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ":memory:"
         run: composer test
 
       - name: Setup Node.js
