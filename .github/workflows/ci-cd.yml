@@ -22,10 +22,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v4
+        uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ env.PHP_VERSION }}
           extensions: mbstring, pdo, pdo_sqlite, zip
+          cache: composer
           ini-values: post_max_size=256M, upload_max_filesize=256M
 
       - name: Install PHP dependencies
@@ -69,19 +70,27 @@ jobs:
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
       - name: Build and push Laravel app image
-        run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/laravel:latest \
-            --tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/laravel:${{ github.sha }} \
-            --push \
-            -f api/Dockerfile ./api
+        uses: docker/build-push-action@v5
+        with:
+          context: ./api
+          file: api/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/laravel:latest
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/laravel:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push Next.js frontend image
-        run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:latest \
-            --tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:${{ github.sha }} \
-            --push \
-            -f public/Dockerfile ./public
+        uses: docker/build-push-action@v5
+        with:
+          context: ./public
+          file: public/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:latest
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
