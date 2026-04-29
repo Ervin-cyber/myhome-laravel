@@ -5,24 +5,21 @@ services:
     restart: unless-stopped
     expose:
       - "6379"
+    volumes:
+      - redisdata:/data  # JAVÍTVA: Redis perzisztencia
     networks:
       - app-network
 
   # 1. Laravel PHP-FPM Service (API)
   laravel:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-    image: ervinpap/laravel:latest
+    image: ervinpap/laravel:latest # Csak az image kell, build nem
     container_name: myhome-laravel
     restart: unless-stopped
     volumes:
-      - ./api:/var/www/html
+      # CSAK azokat a mappákat csatoljuk, amiknek perzisztensnek kell lenniük!
+      # A kódot (./api) nem csatoljuk, az az image része!
       - ./api/database:/var/www/html/database
       - ./api/storage:/var/www/html/storage
-      - /var/www/html/vendor
-    user: root
-    entrypoint: sh -c "chown -R www-data:www-data /var/www/html && php-fpm"
     depends_on:
       - redis
     networks:
@@ -30,35 +27,23 @@ services:
 
   # 2. Laravel Reverb WebSocket Server
   reverb:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    image: ervinpap/laravel:latest
     container_name: laravel-reverb
     restart: unless-stopped
     command: php artisan reverb:start --host=0.0.0.0 --port=8080
-    volumes:
-      - ./api:/var/www/html
-      - /var/www/html/vendor
-    #expose:
-    #  - "8080"
     ports:
-    - "8081:8080"
+      - "8081:8080"
     depends_on:
       - redis
     networks:
       - app-network
 
-  # 3. Laravel Queue Worker (Standard Config)
+  # 3. Laravel Queue Worker
   worker:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    image: ervinpap/laravel:latest
     container_name: laravel-worker
     restart: unless-stopped
     command: php artisan queue:work redis --tries=3 --delay=3
-    volumes:
-      - ./api:/var/www/html
-      - /var/www/html/vendor
     depends_on:
       - redis
     networks:
@@ -74,23 +59,44 @@ services:
     ports:
       - "80:80"
     depends_on:
-      laravel:
-        condition: service_started
-      nextjs:
-        condition: service_started
+      - laravel
+      - nextjs
     networks:
-    - app-network
+      - app-network
 
   # 5. Next.js Frontend
   nextjs:
-    build:
-      context: ./public
     image: ervinpap/nextjs-frontend:latest 
     container_name: nextjs-frontend
     restart: unless-stopped
     environment:
       - HOST=0.0.0.0
       - NODE_ENV=production
+      - API_BASE_URL=https://home.papstack.net
+    networks:
+      - app-network
+
+  # 6. Watchtower - Automatic Deployment
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: unless-stopped
+    environment:
+      - DOCKER_API_VERSION=1.40
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 --cleanup
+    networks:
+      - app-network
+
+  # 7. Cloudflare Tunnel
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: home-cloudflare-tunnel
+    restart: unless-stopped
+    environment: 
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate run
     networks:
       - app-network
 

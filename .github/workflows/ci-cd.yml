@@ -99,3 +99,8 @@ jobs:
             ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_REVERB_APP_KEY=85r6cbqutni8angnhqkd
+            NEXT_PUBLIC_REVERB_HOST=home.papstack.net
+            NEXT_PUBLIC_REVERB_PORT=443
+            NEXT_PUBLIC_REVERB_SCHEME=https
