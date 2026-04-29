@@ -11,7 +11,7 @@ export interface ThermostatData {
     heating: boolean;
     cooling: boolean;
     mode: Mode;
-    heatingUntil: number;
+    hvacUntil: number;
     lastUpdated: Date | null;
 }
 
@@ -34,7 +34,7 @@ export interface SystemStateResponse {
     cooling_on: boolean;
     mode: Mode;
     target_temp: number;
-    heating_until: number;
+    hvac_until: number;
     timestamp?: string;
 }
 
@@ -51,6 +51,6 @@ export interface LiveReadingEvent {
         cooling_on: boolean;
         mode: Mode;
         set_temp: number;
-        heating_until: number;
+        hvac_until: number;
     }
 }

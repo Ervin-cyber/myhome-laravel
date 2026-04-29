@@ -18,13 +18,13 @@ class SystemStateController extends Controller
     public function update(SystemStateRequest $request)
     {
         $data = $request->validated();
-        $heatingUntil = $data['heating_until'] ?? null;
+        $hvacUntil = $data['hvac_until'] ?? $data['heating_until'] ?? null;
         $heatingOn = $data['heating_on'] ?? null;
 
-        if ($heatingUntil === 15 || $heatingUntil === 30) {
-            $data['heating_until'] = time() + (60 * $heatingUntil);
-        } elseif ($heatingUntil > (time() + 3610)) {
-            $data['heating_until'] = 0;
+        if ($hvacUntil === 15 || $hvacUntil === 30) {
+            $data['hvac_until'] = time() + (60 * $hvacUntil);
+        } elseif ($hvacUntil > (time() + 3610)) {
+            $data['hvac_until'] = 0;
         }
 
         $state = SystemState::firstOrCreate();
@@ -55,8 +55,8 @@ class SystemStateController extends Controller
             $state->target_temp = $data['target_temp'];
         }
 
-        if (isset($data['heating_until'])) {
-            $state->heating_until = $data['heating_until'];
+        if (isset($data['hvac_until'])) {
+            $state->hvac_until = $data['hvac_until'];
         }
 
         // Heating on/off (only if in heating mode)
@@ -81,7 +81,7 @@ class SystemStateController extends Controller
             HeatingLog::create([
                 'from_state' => $fromState,
                 'to_state' => $toState,
-                'run_time' => $state->heating_until ?? 0,
+                'run_time' => $state->hvac_until ?? 0,
             ]);
         }
 

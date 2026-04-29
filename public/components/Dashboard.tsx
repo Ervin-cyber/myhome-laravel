@@ -12,15 +12,16 @@ import StatCard from './StatCard';
 import TempGauge from './TempGauge';
 import LoadingSpinner from './LoadingSpinner';
 import ModeToggle from './ModeToggle';
+import ACUnitIcon from './ACUnitIcon';
 
 export default function Dashboard(): JSX.Element {
     const { data, stats, isSaving, saveState, toggleMode } = useThermostat();
 
-    const { currentTemp, targetTemp, heating, cooling, mode, heatingUntil, lastUpdated } = data;
+    const { currentTemp, targetTemp, heating, cooling, mode, hvacUntil, lastUpdated } = data;
     const colors = getThemeColors(mode);
     const isActive = (mode === 'heating' && heating) || (mode === 'cooling' && cooling);
 
-    const quickTemps = [19, 20, 21, 22];
+    const quickTemps = mode === 'heating' ? [19, 20, 21, 22] : [24, 25, 26, 28];
 
     if (!lastUpdated) {
         return (
@@ -34,24 +35,23 @@ export default function Dashboard(): JSX.Element {
 
     return (
         <div className="min-h-screen min-w-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-4 md:p-8">
-            <HeatingBorder isOn={isActive} borderRadius={24}>
+            <HeatingBorder isOn={isActive} borderRadius={24} mode={mode}>
                 <div className="p-3 md:p-8 opacity-90">
                     <div className="flex justify-between gap-4 mb-3">
                         <div className="relative w-full flex items-center gap-3">
                             <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colors.gradient} flex items-center justify-center shadow-lg ${colors.shadowColor}/30`}>
-                                <HeatingIcon size={28} isOn={isActive} />
+                                {
+                                    mode == 'cooling' ?
+                                        <ACUnitIcon size={32} isOn={isActive} />
+                                        : <HeatingIcon size={28} isOn={isActive} />
+                                }
                             </div>
                             <div>
                                 <h1 className={`text-xl md:text-2xl font-bold text-white ${colors.text}`}>Temperature Monitor</h1>
                                 <p className="text-gray-400 text-sm">Realtime data</p>
                             </div>
-                            
+
                             <div className="absolute right-0 flex items-center gap-3">
-                                <ModeToggle 
-                                    mode={mode}
-                                    onToggle={toggleMode}
-                                    disabled={isSaving}
-                                />
                                 <button className="px-2 py-2 rounded-lg bg-gray-700/50 hover:bg-gray-600/50 text-blue-400 font-medium transition-all" onClick={() => signOut()}>
                                     <LogoutIcon />
                                 </button>
@@ -72,15 +72,19 @@ export default function Dashboard(): JSX.Element {
                             </div>
 
                             <div className="flex items-center gap-4 mb-6">
-                                <div className={`text-5xl ${colors.text}`}>
-                                    {mode === 'heating' ? '🔥' : '❄️'}
+                                <div className="flex items-center justify-center">
+                                    <ModeToggle 
+                                        mode={mode}
+                                        onToggle={toggleMode}
+                                        disabled={isSaving}
+                                        hvacOn={heating || cooling}
+                                    />
                                 </div>
                                 <div className="text-5xl md:text-6xl font-light text-white">
                                     {currentTemp?.toFixed(2)}
                                     <span className="text-3xl text-gray-400">°C</span>
                                 </div>
                             </div>
-
                             {currentTemp ? <TempGauge temp={currentTemp} target={targetTemp} isHeating={heating} /> : ''}
 
                             <div className="flex justify-between mt-2 text-xs text-gray-500">
@@ -89,14 +93,16 @@ export default function Dashboard(): JSX.Element {
                                 <span>30°C</span>
                             </div>
 
-                            <div className={`mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${isActive 
-                                ? `${colors.text} ${mode === 'heating' ? 'bg-orange-500/20' : 'bg-blue-500/20'}` 
-                                : 'bg-green-500/20 text-green-400'}`}>
-                                <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-current animate-pulse' : 'bg-green-400'}`} />
-                                {mode === 'heating' 
-                                    ? (heating ? '🔥 Fűtés aktív' : 'Fűtés kikapcsolva')
-                                    : (cooling ? '❄️ Hűtés aktív' : 'Hűtés kikapcsolva')
-                                }
+                            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${isActive
+                                    ? `${colors.text} ${mode === 'heating' ? 'bg-orange-500/20' : 'bg-blue-500/20'}`
+                                    : 'bg-green-500/20 text-green-400'}`}>
+                                    <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-current animate-pulse' : 'bg-green-400'}`} />
+                                    {mode === 'heating'
+                                        ? (heating ? '🔥 Heating...' : 'Heating off')
+                                        : (cooling ? '❄️ Cooling...' : 'Cooling off')
+                                    }
+                                </div>
                             </div>
                         </div>
 
@@ -105,7 +111,7 @@ export default function Dashboard(): JSX.Element {
                             <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Set Target Temperature</span>
 
                             <div className="flex items-center justify-center gap-4 my-8">
-                                <button disabled={isSaving} onClick={() => saveState(Math.max(10, targetTemp - 0.5), heatingUntil)}
+                                <button disabled={isSaving} onClick={() => saveState(Math.max(10, targetTemp - 0.5), hvacUntil)}
                                     className="w-14 h-14 rounded-xl bg-gray-700 hover:bg-gray-600 text-white text-2xl font-light transition-all active:scale-95">
                                     −
                                 </button>
@@ -113,7 +119,7 @@ export default function Dashboard(): JSX.Element {
                                     <span className="text-5xl font-light text-white">{targetTemp}</span>
                                     <span className="text-2xl text-gray-400">°C</span>
                                 </div>
-                                <button disabled={isSaving} onClick={() => saveState(Math.min(30, targetTemp + 0.5), heatingUntil)}
+                                <button disabled={isSaving} onClick={() => saveState(Math.min(30, targetTemp + 0.5), hvacUntil)}
                                     className="w-14 h-14 rounded-xl bg-gray-700 hover:bg-gray-600 text-white text-2xl font-light transition-all active:scale-95">
                                     +
                                 </button>
@@ -126,7 +132,7 @@ export default function Dashboard(): JSX.Element {
                         <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Quick Actions</span>
                         <div className="grid grid-cols-4 sm:grid-cols-8 gap-3 mt-4">
                             {quickTemps.map((t, i) => (
-                                <button key={i} onClick={() => saveState(t, heatingUntil)}
+                                <button key={i} onClick={() => saveState(t, hvacUntil)}
                                     disabled={isSaving}
                                     className={`py-3 rounded-xl font-medium transition-all active:scale-95 ${targetTemp === t
                                         ? `bg-gradient-to-r ${colors.gradient} text-white shadow-lg ${colors.shadowColor}/25`
@@ -139,12 +145,12 @@ export default function Dashboard(): JSX.Element {
 
                     {/* Boost Timers */}
                     <div className="mt-3 bg-gray-800/50 backdrop-blur rounded-2xl p-3 border border-gray-700/50">
-                        <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Boost Heating</span>
+                        <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Boost HVAC</span>
                         <div className="grid grid-cols-2 gap-3 mt-3">
                             <button
                                 onClick={() => saveState(targetTemp, 15)}
-                                disabled={heatingUntil !== 0}
-                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${heatingUntil !== 0
+                                disabled={hvacUntil !== 0}
+                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${hvacUntil !== 0
                                     ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed'
                                     : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/50'
                                     }`}>
@@ -155,8 +161,8 @@ export default function Dashboard(): JSX.Element {
                             </button>
                             <button
                                 onClick={() => saveState(targetTemp, 30)}
-                                disabled={heatingUntil !== 0}
-                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${heatingUntil !== 0
+                                disabled={hvacUntil !== 0}
+                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${hvacUntil !== 0
                                     ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed'
                                     : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/50'
                                     }`}>
@@ -166,7 +172,7 @@ export default function Dashboard(): JSX.Element {
                                 30 min
                             </button>
                         </div>
-                        {heatingUntil !== 0 && (
+                        {hvacUntil !== 0 && (
                             <button
                                 onClick={() => saveState(targetTemp, 0)}
                                 className="w-full mt-2 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium transition-all">

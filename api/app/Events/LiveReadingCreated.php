@@ -25,8 +25,10 @@ class LiveReadingCreated implements ShouldBroadcastNow
             'temperature' => $latestTemp->value,
             'last_updated' => $latestTemp->timestamp,
             'heating_on' => boolval($systemState->heating_on),
+            'cooling_on' => boolval($systemState->cooling_on),
+            'mode' => $systemState->mode,
             'set_temp' => $systemState->target_temp,
-            'heating_until' => $systemState->heating_until,
+            'hvac_until' => $systemState->hvac_until,
         ];
     }
 

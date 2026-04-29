@@ -23,6 +23,7 @@ class SystemStateRequest extends FormRequest
     {
         return [
             'target_temp' => 'nullable|numeric',
+            'hvac_until' => 'nullable|integer',
             'heating_until' => 'nullable|integer',
             'heating_on' => 'nullable|integer',
             'mode' => 'nullable|in:heating,cooling',

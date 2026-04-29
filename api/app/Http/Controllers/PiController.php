@@ -21,7 +21,7 @@ class PiController extends Controller
             'heating_on' => boolval($systemState->heating_on),
             'cooling_on' => boolval($systemState->cooling_on),
             'set_temp' => $systemState->target_temp,
-            'heating_until' => $systemState->heating_until,
+            'hvac_until' => $systemState->hvac_until,
         ];
     }
 }
