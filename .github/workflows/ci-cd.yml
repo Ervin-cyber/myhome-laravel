@@ -46,6 +46,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: ./public/package-lock.json
 
       - name: Install frontend dependencies
         working-directory: ./public
