@@ -13,15 +13,16 @@ import TempGauge from './TempGauge';
 import LoadingSpinner from './LoadingSpinner';
 import ModeToggle from './ModeToggle';
 import ACUnitIcon from './ACUnitIcon';
+import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 export default function Dashboard(): JSX.Element {
     const { data, stats, isSaving, saveState, toggleMode } = useThermostat();
 
     const { currentTemp, targetTemp, heating, cooling, mode, hvacUntil, lastUpdated } = data;
-    const colors = getThemeColors(mode);
+    const colors = getThemeColors(mode) || { gradient: 'from-gray-700 to-gray-800', shadowColor: 'shadow-gray-900', text: 'text-gray-400' };
     const isActive = (mode === 'heating' && heating) || (mode === 'cooling' && cooling);
 
-    const quickTemps = mode === 'heating' ? [19, 20, 21, 22] : [24, 25, 26, 28];
+    const quickTemps = mode === 'heating' ? [19, 20, 21, 22] : (mode === 'cooling' ? [24, 25, 26, 28] : []);
 
     if (!lastUpdated) {
         return (
@@ -41,9 +42,11 @@ export default function Dashboard(): JSX.Element {
                         <div className="relative w-full flex items-center gap-3">
                             <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colors.gradient} flex items-center justify-center shadow-lg ${colors.shadowColor}/30`}>
                                 {
-                                    mode == 'cooling' ?
-                                        <ACUnitIcon size={32} isOn={isActive} />
-                                        : <HeatingIcon size={28} isOn={isActive} />
+                                    mode === 'cooling' ?
+                                        <ACUnitIcon size={32} isOn={isActive} /> :
+                                        mode === 'heating' ?
+                                            <HeatingIcon size={28} isOn={isActive} /> :
+                                            <PowerSettingsNewIcon sx={{ color: 'white', fontSize: 28 }} />
                                 }
                             </div>
                             <div>
@@ -98,9 +101,11 @@ export default function Dashboard(): JSX.Element {
                                     ? `${colors.text} ${mode === 'heating' ? 'bg-orange-500/20' : 'bg-blue-500/20'}`
                                     : 'bg-green-500/20 text-green-400'}`}>
                                     <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-current animate-pulse' : 'bg-green-400'}`} />
-                                    {mode === 'heating'
-                                        ? (heating ? '🔥 Heating...' : 'Heating off')
-                                        : (cooling ? '❄️ Cooling...' : 'Cooling off')
+                                    {mode === 'off'
+                                        ? 'System Standby'
+                                        : mode === 'heating'
+                                            ? (heating ? '🔥 Heating...' : 'Heating off')
+                                            : (cooling ? '❄️ Cooling...' : 'Cooling off')
                                     }
                                 </div>
                             </div>
@@ -128,7 +133,8 @@ export default function Dashboard(): JSX.Element {
                     </div>
 
                     {/* Quick Actions */}
-                    <div className="mt-3 bg-gray-800/50 backdrop-blur rounded-2xl p-3 border border-gray-700/50">
+                    {quickTemps.length > 0 && (
+                        <div className="mt-3 bg-gray-800/50 backdrop-blur rounded-2xl p-3 border border-gray-700/50">
                         <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Quick Actions</span>
                         <div className="grid grid-cols-4 sm:grid-cols-8 gap-3 mt-4">
                             {quickTemps.map((t, i) => (
@@ -142,6 +148,7 @@ export default function Dashboard(): JSX.Element {
                             ))}
                         </div>
                     </div>
+                    )}
 
                     {/* Boost Timers */}
                     <div className="mt-3 bg-gray-800/50 backdrop-blur rounded-2xl p-3 border border-gray-700/50">

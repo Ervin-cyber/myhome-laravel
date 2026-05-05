@@ -3,7 +3,7 @@ export interface User {
     email: string;
 }
 
-export type Mode = 'heating' | 'cooling';
+export type Mode = 'heating' | 'cooling' | 'off';
 
 export interface ThermostatData {
     currentTemp: number;

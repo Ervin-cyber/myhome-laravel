@@ -1,6 +1,6 @@
 import { JSX, useEffect, useState } from "react";
 
-export default function HeatingBorder({ children, isOn = true, borderRadius = 16, mode = 'heating' }: { children: JSX.Element, isOn: boolean, borderRadius: number, mode?: 'heating' | 'cooling' }) {
+export default function HeatingBorder({ children, isOn = true, borderRadius = 16, mode = 'heating' }: { children: JSX.Element, isOn: boolean, borderRadius: number, mode?: 'heating' | 'cooling' | 'off' }) {
   const [pulse, setPulse] = useState(0);
   useEffect(() => {
     if (!isOn) return;
@@ -9,8 +9,9 @@ export default function HeatingBorder({ children, isOn = true, borderRadius = 16
   }, [isOn]);
   const glow = isOn ? Math.sin(pulse * 0.1) * 0.3 + 0.7 : 0;
   const isCooling = mode === 'cooling';
-  const mainColor = isCooling ? '100, 180, 255' : '255, 100, 0';
-  const shadowColor = isCooling ? '50, 120, 255' : '255, 50, 0';
+  const isOff = mode === 'off';
+  const mainColor = isOff ? '150, 150, 150' : (isCooling ? '100, 180, 255' : '255, 100, 0');
+  const shadowColor = isOff ? '100, 100, 100' : (isCooling ? '50, 120, 255' : '255, 50, 0');
 
   return (
     <div className="relative overflow-hidden h-full" style={{
