@@ -17,7 +17,7 @@ env:
 jobs:
   test:
     name: Run tests and build frontend
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +58,7 @@ jobs:
 
   build-and-push:
     name: Build and publish Docker images
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: test
     if: github.ref == 'refs/heads/main'
     steps:
@@ -80,7 +80,7 @@ jobs:
           context: ./api
           file: api/Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/laravel:latest
             ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/laravel:${{ github.sha }}
@@ -93,7 +93,7 @@ jobs:
           context: ./public
           file: public/Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:latest
             ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/nextjs-frontend:${{ github.sha }}
