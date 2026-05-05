@@ -153,15 +153,7 @@ export function useThermostat() {
         return res.json();
     };
 
-    const toggleMode = async () => {
-        let newMode: Mode;
-        if (data.mode === 'heating') {
-            newMode = 'cooling';
-        } else if (data.mode === 'cooling') {
-            newMode = 'off';
-        } else {
-            newMode = 'heating';
-        }
+    const changeMode = async (newMode: Mode) => {
 
         if (timeoutRef?.current) {
             clearTimeout(timeoutRef.current);
@@ -190,6 +182,6 @@ export function useThermostat() {
         isSaving,
         saveState,
         refreshData,
-        toggleMode
+        changeMode
     };
 }

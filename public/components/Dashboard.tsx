@@ -16,7 +16,7 @@ import ACUnitIcon from './ACUnitIcon';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 export default function Dashboard(): JSX.Element {
-    const { data, stats, isSaving, saveState, toggleMode } = useThermostat();
+    const { data, stats, isSaving, saveState, changeMode } = useThermostat();
 
     const { currentTemp, targetTemp, heating, cooling, mode, hvacUntil, lastUpdated } = data;
     const colors = getThemeColors(mode) || { gradient: 'from-gray-700 to-gray-800', shadowColor: 'shadow-gray-900', text: 'text-gray-400' };
@@ -78,7 +78,7 @@ export default function Dashboard(): JSX.Element {
                                 <div className="flex items-center justify-center">
                                     <ModeToggle 
                                         mode={mode}
-                                        onToggle={toggleMode}
+                                        onChangeMode={changeMode}
                                         disabled={isSaving}
                                         hvacOn={heating || cooling}
                                     />
@@ -116,16 +116,20 @@ export default function Dashboard(): JSX.Element {
                             <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Set Target Temperature</span>
 
                             <div className="flex items-center justify-center gap-4 my-8">
-                                <button disabled={isSaving} onClick={() => saveState(Math.max(10, targetTemp - 0.5), hvacUntil)}
-                                    className="w-14 h-14 rounded-xl bg-gray-700 hover:bg-gray-600 text-white text-2xl font-light transition-all active:scale-95">
+                                <button 
+                                    disabled={isSaving || mode === 'off'} 
+                                    onClick={() => saveState(Math.max(10, targetTemp - 0.5), hvacUntil)}
+                                    className={`w-14 h-14 rounded-xl text-white text-2xl font-light transition-all active:scale-95 ${isSaving || mode === 'off' ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600'}`}>
                                     −
                                 </button>
                                 <div className="w-32 text-center">
-                                    <span className="text-5xl font-light text-white">{targetTemp}</span>
+                                    <span className={`text-5xl font-light ${mode === 'off' ? 'text-gray-500' : 'text-white'}`}>{targetTemp}</span>
                                     <span className="text-2xl text-gray-400">°C</span>
                                 </div>
-                                <button disabled={isSaving} onClick={() => saveState(Math.min(30, targetTemp + 0.5), hvacUntil)}
-                                    className="w-14 h-14 rounded-xl bg-gray-700 hover:bg-gray-600 text-white text-2xl font-light transition-all active:scale-95">
+                                <button 
+                                    disabled={isSaving || mode === 'off'} 
+                                    onClick={() => saveState(Math.min(30, targetTemp + 0.5), hvacUntil)}
+                                    className={`w-14 h-14 rounded-xl text-white text-2xl font-light transition-all active:scale-95 ${isSaving || mode === 'off' ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600'}`}>
                                     +
                                 </button>
                             </div>

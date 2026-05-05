@@ -101,7 +101,7 @@ services:
     environment:
       - HOST=0.0.0.0
       - NODE_ENV=development
-      - API_BASE_URL=http://localhost
+      - API_BASE_URL=http://nginx
       - NEXT_PUBLIC_REVERB_APP_KEY=85r6cbqutni8angnhqkd
       - NEXT_PUBLIC_REVERB_HOST=localhost
       - NEXT_PUBLIC_REVERB_PORT=8081

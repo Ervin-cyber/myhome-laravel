@@ -26,7 +26,7 @@ class SystemStateRequest extends FormRequest
             'hvac_until' => 'nullable|integer',
             'heating_until' => 'nullable|integer',
             'heating_on' => 'nullable|integer',
-            'mode' => 'nullable|in:heating,cooling',
+            'mode' => 'nullable|in:heating,cooling,off',
             'cooling_on' => 'nullable|integer'
         ];
     }

@@ -48,6 +48,11 @@ class SystemStateController extends Controller
                     $state->heating_on = $data['heating_on'];
                 }
             }
+            // If switching to off, disable everything
+            elseif ($data['mode'] === 'off') {
+                $state->heating_on = false;
+                $state->cooling_on = false;
+            }
         }
 
         // Temperature setting

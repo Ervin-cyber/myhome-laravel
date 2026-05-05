@@ -7,29 +7,30 @@ import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 interface ModeToggleProps {
     mode: Mode;
-    onToggle: () => void;
+    onChangeMode: (newMode: Mode) => void;
     disabled?: boolean;
     hvacOn: boolean;
 }
 
-export default function ModeToggle({ mode, onToggle, disabled, hvacOn }: ModeToggleProps) {
+export default function ModeToggle({ mode, onChangeMode, disabled, hvacOn }: ModeToggleProps) {
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement | null>(null);
 
-    const getModeConfig = (m: Mode) => {
+    const getModeConfig = (m: Mode, isCurrent: boolean) => {
         switch (m) {
             case 'heating':
-                return { icon: '🔥', label: 'Heating', nextLabel: 'Switch to Cooling', nextIcon: '❄️' };
+                return { icon: <span className={isCurrent ? "text-3xl" : "text-xl"}>🔥</span>, label: 'Heating' };
             case 'cooling':
-                return { icon: <SnowflakeIcon isOn={hvacOn} />, label: 'Cooling', nextLabel: 'Switch to Off', nextIcon: <PowerSettingsNewIcon className="text-xl" /> };
+                return { icon: <SnowflakeIcon isOn={hvacOn && isCurrent} size={isCurrent ? 32 : 24} />, label: 'Cooling' };
             case 'off':
-                return { icon: <PowerSettingsNewIcon className="text-3xl" />, label: 'Off', nextLabel: 'Switch to Heating', nextIcon: '🔥' };
+                return { icon: <PowerSettingsNewIcon className={isCurrent ? "text-3xl" : "text-xl"} />, label: 'Off' };
             default:
-                return { icon: '?', label: 'Unknown', nextLabel: 'Reset', nextIcon: '🔥' };
+                return { icon: '?', label: 'Unknown' };
         }
     };
 
-    const currentConfig = getModeConfig(mode);
+    const currentConfig = getModeConfig(mode, true);
+    const modes: Mode[] = ['heating', 'cooling', 'off'];
 
     useEffect(() => {
         if (!open) return;
@@ -57,18 +58,24 @@ export default function ModeToggle({ mode, onToggle, disabled, hvacOn }: ModeTog
             </button>
 
             {open && !disabled && (
-                <div className="absolute left-0 top-full mt-2 w-44 rounded-2xl border border-slate-700/80 bg-slate-950/95 shadow-2xl backdrop-blur-sm z-50">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setOpen(false);
-                            onToggle();
-                        }}
-                        className="w-full px-4 py-3 text-left text-sm text-white transition-colors duration-200 hover:bg-slate-800"
-                    >
-                        <span className="mr-2 inline-flex items-center align-middle">{currentConfig.nextIcon}</span>
-                        <span className="align-middle">{currentConfig.nextLabel}</span>
-                    </button>
+                <div className="absolute left-0 top-full mt-2 w-48 rounded-2xl border border-slate-700/80 bg-slate-950/95 shadow-2xl backdrop-blur-sm z-50 overflow-hidden">
+                    {modes.filter(m => m !== mode).map((m) => {
+                        const config = getModeConfig(m, false);
+                        return (
+                            <button
+                                key={m}
+                                type="button"
+                                onClick={() => {
+                                    setOpen(false);
+                                    onChangeMode(m);
+                                }}
+                                className="w-full px-4 py-3 text-left text-sm text-white transition-colors duration-200 hover:bg-slate-800 flex items-center gap-3"
+                            >
+                                <span className="inline-flex items-center justify-center w-8 h-8 opacity-70">{config.icon}</span>
+                                <span className="capitalize">{m}</span>
+                            </button>
+                        );
+                    })}
                 </div>
             )}
         </div>
