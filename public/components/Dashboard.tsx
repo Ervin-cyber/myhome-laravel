@@ -156,8 +156,8 @@ export default function Dashboard(): JSX.Element {
                         <div className="grid grid-cols-2 gap-3 mt-3">
                             <button
                                 onClick={() => saveState(targetTemp, 15)}
-                                disabled={hvacUntil !== 0}
-                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${hvacUntil !== 0
+                                disabled={hvacUntil !== 0 || mode === 'off'}
+                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${hvacUntil !== 0 || mode === 'off'
                                     ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed'
                                     : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/50'
                                     }`}>
@@ -168,8 +168,8 @@ export default function Dashboard(): JSX.Element {
                             </button>
                             <button
                                 onClick={() => saveState(targetTemp, 30)}
-                                disabled={hvacUntil !== 0}
-                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${hvacUntil !== 0
+                                disabled={hvacUntil !== 0 || mode === 'off'}
+                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${hvacUntil !== 0 || mode === 'off'
                                     ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed'
                                     : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/50'
                                     }`}>

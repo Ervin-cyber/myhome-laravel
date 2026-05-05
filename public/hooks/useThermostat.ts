@@ -1,5 +1,5 @@
 import { createEcho } from '@/lib/echo';
-import { FetchLatestDataResponse, LiveReadingEvent, Stat, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
+import { FetchLatestDataResponse, LiveReadingEvent, Mode, Stat, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRefetchOnFocus } from './useRefetchOnFocus';
 import { useNotification } from '@/context/NotificationContext';
@@ -143,7 +143,7 @@ export function useThermostat() {
         return { temp, state };
     };
 
-    const updateState = async (targetTemp: number, hvacUntil: number, mode: 'heating' | 'cooling' = data.mode) => {
+    const updateState = async (targetTemp: number, hvacUntil: number, mode: Mode = data.mode) => {
         const res = await fetchClient('/proxy/api/state', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -154,7 +154,15 @@ export function useThermostat() {
     };
 
     const toggleMode = async () => {
-        const newMode: 'heating' | 'cooling' = data.mode === 'heating' ? 'cooling' : 'heating';
+        let newMode: Mode;
+        if (data.mode === 'heating') {
+            newMode = 'cooling';
+        } else if (data.mode === 'cooling') {
+            newMode = 'off';
+        } else {
+            newMode = 'heating';
+        }
+
         if (timeoutRef?.current) {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
