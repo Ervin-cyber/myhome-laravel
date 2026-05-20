@@ -21,9 +21,9 @@ class SystemStateController extends Controller
         $hvacUntil = $data['hvac_until'] ?? $data['heating_until'] ?? null;
         $heatingOn = $data['heating_on'] ?? null;
 
-        if ($hvacUntil === 15 || $hvacUntil === 30) {
+        if ($hvacUntil === 30 || $hvacUntil === 60) {
             $data['hvac_until'] = time() + (60 * $hvacUntil);
-        } elseif ($hvacUntil > (time() + 3610)) {
+        } elseif ($hvacUntil > (time() + 7210)) {
             $data['hvac_until'] = 0;
         }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, JSX, useState } from 'react';
+import { FormEvent, JSX, useState, useEffect, useRef } from 'react';
 import { signIn } from '../actions/auth';
 import HeatingIcon from './HeatingOnIcon';
 import { useNotification } from '@/context/NotificationContext';
@@ -12,18 +12,59 @@ export default function AuthCard(): JSX.Element {
     const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
+    const [hasAttemptedAutoSubmit, setHasAttemptedAutoSubmit] = useState(false);
 
-    const handleSubmit = async (e: FormEvent<HTMLButtonElement>): Promise<void> => {
-        e.preventDefault();
+    const emailRef = useRef<HTMLInputElement>(null);
+    const passwordRef = useRef<HTMLInputElement>(null);
+    const [isEmailAutofilled, setIsEmailAutofilled] = useState(false);
+    const [isPasswordAutofilled, setIsPasswordAutofilled] = useState(false);
+
+    const submit = async (eEmail?: string, ePass?: string) => {
+        const finalEmail = eEmail || email || emailRef.current?.value || '';
+        const finalPassword = ePass || password || passwordRef.current?.value || '';
+
+        if (!finalEmail || !finalPassword || isLoading) return;
+
         setIsLoading(true);
         try {
-            await signIn(email, password)
+            await signIn(finalEmail, finalPassword)
         } catch (e: unknown) {
             if (e instanceof Error && e.message != 'NEXT_REDIRECT') showNotification('Invalid Credentials!', 'error');
         } finally {
             setTimeout(() => setIsLoading(false), 1);
         }
     };
+
+    const handleSubmit = async (e?: FormEvent): Promise<void> => {
+        e?.preventDefault();
+        await submit();
+    };
+
+    const handleAnimationStart = (e: React.AnimationEvent<HTMLInputElement>, field: 'email' | 'password') => {
+        if (e.animationName === 'onAutoFillStart') {
+            if (field === 'email') setIsEmailAutofilled(true);
+            if (field === 'password') setIsPasswordAutofilled(true);
+        } else if (e.animationName === 'onAutoFillCancel') {
+            if (field === 'email') setIsEmailAutofilled(false);
+            if (field === 'password') setIsPasswordAutofilled(false);
+        }
+    };
+
+    useEffect(() => {
+        if (isEmailAutofilled && isPasswordAutofilled && !isLoading && !hasAttemptedAutoSubmit) {
+            const valEmail = email || emailRef.current?.value;
+            const valPassword = password || passwordRef.current?.value;
+            if (valEmail && valPassword) {
+                setHasAttemptedAutoSubmit(true);
+                submit(valEmail, valPassword);
+            }
+        }
+    }, [isEmailAutofilled, isPasswordAutofilled, email, password, isLoading, hasAttemptedAutoSubmit]);
+
+    // Reset auto-submit guard if user manually clears/changes fields
+    useEffect(() => {
+        setHasAttemptedAutoSubmit(false);
+    }, [email, password]);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
@@ -42,7 +83,7 @@ export default function AuthCard(): JSX.Element {
 
                 {/* Login Card */}
                 <div className="bg-gray-800/30 backdrop-blur-xl rounded-3xl p-8 border border-gray-700/50 shadow-2xl">
-                    <div className="space-y-6">
+                    <form onSubmit={handleSubmit} className="space-y-6">
                         {/* Email Field */}
                         <div>
                             <label className="block text-gray-400 text-sm font-medium mb-2">Email Address</label>
@@ -53,9 +94,12 @@ export default function AuthCard(): JSX.Element {
                                     </svg>
                                 </div>
                                 <input
+                                    ref={emailRef}
                                     type="email"
+                                    name="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
+                                    onAnimationStart={(e) => handleAnimationStart(e, 'email')}
                                     placeholder="you@example.com"
                                     className="w-full pl-12 pr-4 py-4 bg-gray-900/50 border border-gray-600/50 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 transition-all"
                                 />
@@ -72,9 +116,12 @@ export default function AuthCard(): JSX.Element {
                                     </svg>
                                 </div>
                                 <input
+                                    ref={passwordRef}
                                     type={showPassword ? 'text' : 'password'}
+                                    name="password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
+                                    onAnimationStart={(e) => handleAnimationStart(e, 'password')}
                                     placeholder="••••••••"
                                     className="w-full pl-12 pr-12 py-4 bg-gray-900/50 border border-gray-600/50 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 transition-all"
                                 />
@@ -85,7 +132,7 @@ export default function AuthCard(): JSX.Element {
                                 >
                                     {showPassword ? (
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268-2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
                                         </svg>
                                     ) : (
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -99,7 +146,7 @@ export default function AuthCard(): JSX.Element {
 
                         {/* Login Button */}
                         <button
-                            onClick={handleSubmit}
+                            type="submit"
                             disabled={isLoading}
                             className="w-full py-4 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-semibold transition-all shadow-lg shadow-orange-500/25 active:scale-98 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
@@ -120,7 +167,7 @@ export default function AuthCard(): JSX.Element {
                                 </>
                             )}
                         </button>
-                    </div>
+                    </form>
                 </div>
             </div>
         </div>

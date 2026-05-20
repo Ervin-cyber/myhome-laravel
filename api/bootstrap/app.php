@@ -24,5 +24,23 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->reportable(function (Throwable $e) {
+            $topic = env('NTFY_TOPIC');
+            if (!$topic) return;
+
+            try {
+                \Illuminate\Support\Facades\Http::withHeaders([
+                    'Title' => 'Server Error - MyHome',
+                    'Priority' => 'high',
+                    'Tags' => 'rotating_light,error'
+                ])->post("https://ntfy.sh/{$topic}", [
+                    'message' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'url' => request()->fullUrl(),
+                ]);
+            } catch (\Exception $ex) {
+                // Silently fail to avoid infinite loops if ntfy is down
+            }
+        });
     })->create();

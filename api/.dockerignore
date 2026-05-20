@@ -1,0 +1,8 @@
+/vendor
+/storage/*.key
+/.env
+/bootstrap/cache/*.php
+!/bootstrap/cache/.gitignore
+.phpunit.result.cache
+.env.backup
+.env.production

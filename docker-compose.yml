@@ -1,25 +1,26 @@
 services:
   redis:
-    image: redis:alpine
+    image: redis:6.2-alpine
     container_name: myhome-redis
     restart: unless-stopped
     expose:
       - "6379"
     volumes:
-      - redisdata:/data  # JAVÍTVA: Redis perzisztencia
+      - redisdata:/data
     networks:
       - app-network
 
   # 1. Laravel PHP-FPM Service (API)
   laravel:
-    image: ervinpap/laravel:latest # Csak az image kell, build nem
+    image: ervinpap/myhome-laravel:latest
+    build:
+      context: ./api
+      dockerfile: Dockerfile
     container_name: myhome-laravel
     restart: unless-stopped
     env_file:
       - ./api/.env
     volumes:
-      # CSAK azokat a mappákat csatoljuk, amiknek perzisztensnek kell lenniük!
-      # A kódot (./api) nem csatoljuk, az az image része!
       - ./api/database:/var/www/html/database
       - ./api/storage:/var/www/html/storage
     depends_on:
@@ -29,7 +30,10 @@ services:
 
   # 2. Laravel Reverb WebSocket Server
   reverb:
-    image: ervinpap/laravel:latest
+    image: ervinpap/myhome-reverb:latest
+    build:
+      context: ./api
+      dockerfile: Dockerfile
     container_name: laravel-reverb
     restart: unless-stopped
     env_file:
@@ -47,7 +51,10 @@ services:
 
   # 3. Laravel Queue Worker
   worker:
-    image: ervinpap/laravel:latest
+    image: ervinpap/myhome-worker:latest
+    build:
+      context: ./api
+      dockerfile: Dockerfile
     container_name: laravel-worker
     restart: unless-stopped
     env_file:
@@ -78,7 +85,15 @@ services:
 
   # 5. Next.js Frontend
   nextjs:
-    image: ervinpap/nextjs-frontend:latest 
+    image: ervinpap/myhome-nextjs:latest 
+    build:
+      context: ./public
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_REVERB_APP_KEY=85r6cbqutni8angnhqkd
+        - NEXT_PUBLIC_REVERB_HOST=home.papstack.net
+        - NEXT_PUBLIC_REVERB_PORT=443
+        - NEXT_PUBLIC_REVERB_SCHEME=https
     container_name: nextjs-frontend
     restart: unless-stopped
     environment:
