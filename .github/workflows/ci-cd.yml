@@ -7,6 +7,13 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force a full build of all images'
+        required: false
+        default: 'false'
+        type: boolean
 
 env:
   NODE_VERSION: '20'
@@ -86,7 +93,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.api == 'true' &&
+      (needs.changes.outputs.api == 'true' || github.event.inputs.force_build == 'true') &&
       (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
     runs-on: self-hosted
     steps:
@@ -117,7 +124,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.frontend == 'true' &&
+      (needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build == 'true') &&
       (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped')
     runs-on: self-hosted
     steps:
