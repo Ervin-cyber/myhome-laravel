@@ -87,7 +87,7 @@ export async function proxy(req: NextRequest) {
       url.pathname = '/dashboard';
       return NextResponse.redirect(url);
     }
-  } catch (err) {
+  } catch {
     url.pathname = '/login';
     return NextResponse.redirect(url);
   }

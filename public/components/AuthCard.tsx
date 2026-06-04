@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, JSX, useState, useEffect, useRef } from 'react';
+import { FormEvent, JSX, useState, useEffect, useRef, useCallback } from 'react';
 import { signIn } from '../actions/auth';
 import HeatingIcon from './HeatingOnIcon';
 import { useNotification } from '@/context/NotificationContext';
@@ -19,7 +19,7 @@ export default function AuthCard(): JSX.Element {
     const [isEmailAutofilled, setIsEmailAutofilled] = useState(false);
     const [isPasswordAutofilled, setIsPasswordAutofilled] = useState(false);
 
-    const submit = async (eEmail?: string, ePass?: string) => {
+    const submit = useCallback(async (eEmail?: string, ePass?: string) => {
         const finalEmail = eEmail || email || emailRef.current?.value || '';
         const finalPassword = ePass || password || passwordRef.current?.value || '';
 
@@ -33,7 +33,7 @@ export default function AuthCard(): JSX.Element {
         } finally {
             setTimeout(() => setIsLoading(false), 1);
         }
-    };
+    }, [email, password, isLoading, showNotification]);
 
     const handleSubmit = async (e?: FormEvent): Promise<void> => {
         e?.preventDefault();
@@ -59,7 +59,7 @@ export default function AuthCard(): JSX.Element {
                 submit(valEmail, valPassword);
             }
         }
-    }, [isEmailAutofilled, isPasswordAutofilled, email, password, isLoading, hasAttemptedAutoSubmit]);
+    }, [isEmailAutofilled, isPasswordAutofilled, email, password, isLoading, hasAttemptedAutoSubmit, submit]);
 
     // Reset auto-submit guard if user manually clears/changes fields
     useEffect(() => {

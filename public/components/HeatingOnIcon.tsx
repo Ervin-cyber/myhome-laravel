@@ -10,8 +10,6 @@ export default function HeatingIcon({ size , isOn, className } : HeatingIconProp
     return () => clearInterval(interval);
   }, [isOn]);
 
-  const s = size / 100; // scale factor
-
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" className={className}>
       {isOn && (

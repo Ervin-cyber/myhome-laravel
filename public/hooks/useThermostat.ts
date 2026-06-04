@@ -35,6 +35,40 @@ export function useThermostat() {
         }));
     }, []);
 
+    const fetchClient = useCallback(async (url: string, options: RequestInit = {}) => {
+        const response = await fetch(url, options);
+
+        if (response.status === 401) {
+            showNotification('Session expired! Please login.', 'error');
+            setTimeout(() => {
+                if (typeof window !== 'undefined') {
+                    window.location.href = '/login';
+                }
+            }, 5000);
+            throw new Error('Unauthorized');
+        }
+
+        return response;
+    }, [showNotification]);
+
+    const fetchStats = useCallback(async (): Promise<Stat> => {
+        const res = await fetchClient('/proxy/api/stats');
+        if (!res.ok) throw new Error('Failed to fetch stats');
+        return res.json();
+    }, [fetchClient]);
+
+    const fetchLatestData = useCallback(async (): Promise<FetchLatestDataResponse> => {
+        const [tempResult, stateResult] = await Promise.all([
+            fetchClient('/proxy/api/temperature-latest'),
+            fetchClient('/proxy/api/state')
+        ]);
+
+        const temp = tempResult.ok ? await tempResult.json() : null;
+        const state = stateResult.ok ? await stateResult.json() : null;
+
+        return { temp, state };
+    }, [fetchClient]);
+
     const refreshData = useCallback(async () => {
         try {
             const newStats = await fetchStats();
@@ -47,7 +81,7 @@ export function useThermostat() {
         } catch (error) {
             console.error("Failed to refresh data", error);
         }
-    }, [processUpdate]);
+    }, [fetchStats, fetchLatestData, processUpdate]);
 
     useRefetchOnFocus(refreshData);
 
@@ -82,7 +116,17 @@ export function useThermostat() {
             clearInterval(pollInterval);
             if (echo) echo.leave('live-updates');
         };
-    }, [refreshData]);
+    }, [refreshData, fetchStats]);
+
+    const updateState = useCallback(async (body: Record<string, unknown>) => {
+        const res = await fetchClient('/proxy/api/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error('Failed to save state');
+        return res.json();
+    }, [fetchClient]);
 
     const saveState = async (val: number, until: number) => {
         if (val < 10 || until < 0) return;
@@ -111,50 +155,6 @@ export function useThermostat() {
         } finally {
             setIsSaving(false);
         }
-    };
-
-    const fetchClient = async (url: string, options: RequestInit = {}) => {
-        const response = await fetch(url, options);
-
-        if (response.status === 401) {
-            showNotification('Session expired! Please login.', 'error');
-            setTimeout(() => {
-                if (typeof window !== 'undefined') {
-                    window.location.href = '/login';
-                }
-            }, 5000);
-            throw new Error('Unauthorized');
-        }
-
-        return response;
-    };
-
-    const fetchStats = async (): Promise<Stat> => {
-        const res = await fetchClient('/proxy/api/stats');
-        if (!res.ok) throw new Error('Failed to fetch stats');
-        return res.json();
-    };
-
-    const fetchLatestData = async (): Promise<FetchLatestDataResponse> => {
-        const [tempResult, stateResult] = await Promise.all([
-            fetchClient('/proxy/api/temperature-latest'),
-            fetchClient('/proxy/api/state')
-        ]);
-
-        const temp = tempResult.ok ? await tempResult.json() : null;
-        const state = stateResult.ok ? await stateResult.json() : null;
-
-        return { temp, state };
-    };
-
-    const updateState = async (body: any) => {
-        const res = await fetchClient('/proxy/api/state', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        if (!res.ok) throw new Error('Failed to save state');
-        return res.json();
     };
 
     const changeMode = async (newMode: Mode) => {
