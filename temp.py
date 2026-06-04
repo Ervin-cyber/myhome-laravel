@@ -199,7 +199,10 @@ def process_hvac_control(home_data):
     set_temp = home_data.get('set_temp')
     hvac_until = home_data.get('hvac_until') or 0
     mode = home_data.get('mode')
+    enabled = home_data.get('enabled', True)
     current_ts = int(time.time())
+    
+    is_boost_active = hvac_until > current_ts
 
     if temp is None or set_temp is None or not (10 < temp < 50):
         print(f"Safety: Invalid temperature value or target setpoint. Turning OFF.")
@@ -212,22 +215,28 @@ def process_hvac_control(home_data):
         send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': 0 })
         return
 
+    # System is OFF if not enabled AND no boost active
+    if not enabled and not is_boost_active:
+        if cooling_on or heating_on:
+            print("ACTION: System DISABLED. Turning everything OFF.")
+            cooling_on = False
+            heating_on = False
+            set_cooling_relay(False, 30) 
+            set_heating_relay(False)
+            send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': 0 })
+        else:
+            print(f"IDLE: System Off. Temp {temp}°C.")
+        return
+
+    # If we are here, system is either enabled OR boosting
     if mode == 'cooling':
         if heating_on:
             heating_on = False
             set_heating_relay(False)
 
-        should_stop_cooling = (0 < hvac_until < current_ts)
-        if should_stop_cooling and cooling_on:
-            cooling_on = False
-            print(f"ACTION: Cooling BOOST expired. Turning OFF AC units and switching mode to OFF.")
-            set_cooling_relay(False, 30)
-            send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': 0, 'mode': 'off' })
-            return
-
-        if not cooling_on and not should_stop_cooling:
+        if not cooling_on:
             cooling_on = True
-            print(f"ACTION: Cooling mode active. Turning on AC units. Target: {set_temp}°C")
+            print(f"ACTION: Cooling mode active {'(BOOST)' if is_boost_active else ''}. Turning on AC units. Target: {set_temp}°C")
             set_cooling_relay(True, set_temp)
             send_state({ 'heating_on': 0, 'cooling_on': 1, 'hvac_until': hvac_until })
         elif cooling_on and previous_control_data.get('set_temp') != set_temp:
@@ -239,8 +248,8 @@ def process_hvac_control(home_data):
             cooling_on = False
             set_cooling_relay(False, 30)
 
-        should_heat = (temp <= (set_temp - TOLERANCE) or hvac_until > current_ts)
-        should_stop = (temp >= (set_temp + TOLERANCE) and -1 < hvac_until < current_ts)
+        should_heat = (temp <= (set_temp - TOLERANCE) or is_boost_active)
+        should_stop = (temp >= (set_temp + TOLERANCE) and not is_boost_active)
 
         if should_heat and not heating_on:
             heating_on = True
@@ -250,21 +259,12 @@ def process_hvac_control(home_data):
 
         elif should_stop and heating_on:
             heating_on = False
-            print(f"ACTION: Temp {temp}°C is above target {set_temp}°C and BOOST expired. Heating OFF.")
+            print(f"ACTION: Temp {temp}°C is above target {set_temp}°C. Heating OFF.")
             set_heating_relay(False)
-            send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': 0 })
+            send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': hvac_until })
 
         else:
-            print(f"IDLE: Temp {temp}°C. Heating is {'ON' if heating_on else 'OFF'}.")
-
-    elif mode == 'off' or mode is None:
-        if cooling_on or heating_on:
-            print("ACTION: System shutdown (OFF mode).")
-            cooling_on = False
-            heating_on = False
-            set_cooling_relay(False, 30) 
-            set_heating_relay(False)
-            send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': 0 })
+            print(f"IDLE: Temp {temp}°C. Heating is {'ON' if heating_on else 'OFF'}. {'(BOOST active)' if is_boost_active else ''}")
 
 def on_open(ws):
     print("WebSocket connection opened. Subscribing to channel...")

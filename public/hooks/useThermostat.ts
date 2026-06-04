@@ -14,6 +14,7 @@ export function useThermostat() {
         heating: false,
         cooling: false,
         mode: 'heating',
+        enabled: true,
         hvacUntil: 0,
         lastUpdated: null,
     });
@@ -27,7 +28,8 @@ export function useThermostat() {
             lastUpdated: tempData?.timestamp ? new Date(tempData.timestamp) : prev.lastUpdated,
             heating: stateData?.heating_on ?? prev.heating,
             cooling: stateData?.cooling_on ?? prev.cooling,
-            mode: stateData?.mode ?? prev.mode,
+            mode: (stateData?.mode as Mode) ?? prev.mode,
+            enabled: stateData?.enabled ?? prev.enabled,
             targetTemp: stateData?.target_temp ?? prev.targetTemp,
             hvacUntil: stateData?.hvac_until ?? prev.hvacUntil,
         }));
@@ -68,6 +70,7 @@ export function useThermostat() {
                             heating: r.heating_on,
                             cooling: r.cooling_on ?? false,
                             mode: r.mode ?? 'heating',
+                            enabled: r.enabled ?? true,
                             targetTemp: r.set_temp,
                             hvacUntil: r.hvac_until ?? 0
                         });
@@ -84,6 +87,7 @@ export function useThermostat() {
     const saveState = async (val: number, until: number) => {
         if (val < 10 || until < 0) return;
         const mode = data.mode;
+        const enabled = data.enabled;
         setIsSaving(true);
         try {
             setData(prev => ({ ...prev, targetTemp: val, hvacUntil: until }));
@@ -95,7 +99,7 @@ export function useThermostat() {
 
             timeoutRef.current = setTimeout(async () => {
                 try {
-                    await updateState(val, until, mode);
+                    await updateState({ target_temp: val, hvac_until: until, mode, enabled });
                 } catch (error) {
                     console.error(error);
                 } finally {
@@ -143,11 +147,11 @@ export function useThermostat() {
         return { temp, state };
     };
 
-    const updateState = async (targetTemp: number, hvacUntil: number, mode: Mode = data.mode) => {
+    const updateState = async (body: any) => {
         const res = await fetchClient('/proxy/api/state', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ "target_temp": targetTemp, "hvac_until": hvacUntil, "mode": mode }),
+            body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error('Failed to save state');
         return res.json();
@@ -162,7 +166,7 @@ export function useThermostat() {
 
         setIsSaving(true);
         try {
-            await updateState(data.targetTemp, data.hvacUntil, newMode);
+            await updateState({ target_temp: data.targetTemp, hvac_until: data.hvacUntil, mode: newMode, enabled: data.enabled });
             setData(prev => ({
                 ...prev,
                 mode: newMode,
@@ -176,12 +180,31 @@ export function useThermostat() {
         }
     };
 
+    const togglePower = async () => {
+        const newEnabled = !data.enabled;
+        setIsSaving(true);
+        try {
+            await updateState({ target_temp: data.targetTemp, hvac_until: data.hvacUntil, mode: data.mode, enabled: newEnabled });
+            setData(prev => ({
+                ...prev,
+                enabled: newEnabled,
+                heating: newEnabled ? prev.heating : false,
+                cooling: newEnabled ? prev.cooling : false,
+            }));
+        } catch (error) {
+            console.error('Failed to toggle power', error);
+        } finally {
+            setIsSaving(false);
+        }
+    }
+
     return {
         data,
         stats,
         isSaving,
         saveState,
         refreshData,
-        changeMode
+        changeMode,
+        togglePower
     };
 }

@@ -3,7 +3,7 @@ export interface User {
     email: string;
 }
 
-export type Mode = 'heating' | 'cooling' | 'off';
+export type Mode = 'heating' | 'cooling';
 
 export interface ThermostatData {
     currentTemp: number;
@@ -11,6 +11,7 @@ export interface ThermostatData {
     heating: boolean;
     cooling: boolean;
     mode: Mode;
+    enabled: boolean;
     hvacUntil: number;
     lastUpdated: Date | null;
 }
@@ -33,6 +34,7 @@ export interface SystemStateResponse {
     heating_on: boolean;
     cooling_on: boolean;
     mode: Mode;
+    enabled: boolean;
     target_temp: number;
     hvac_until: number;
     timestamp?: string;
@@ -50,6 +52,7 @@ export interface LiveReadingEvent {
         heating_on: boolean;
         cooling_on: boolean;
         mode: Mode;
+        enabled: boolean;
         set_temp: number;
         hvac_until: number;
     }

@@ -19,9 +19,8 @@ class SystemStateController extends Controller
     {
         $data = $request->validated();
         $hvacUntil = $data['hvac_until'] ?? $data['heating_until'] ?? null;
-        $heatingOn = $data['heating_on'] ?? null;
-
-        if ($hvacUntil === 30 || $hvacUntil === 60) {
+        
+        if (in_array($hvacUntil, [15, 30, 60])) {
             $data['hvac_until'] = time() + (60 * $hvacUntil);
         } elseif ($hvacUntil > (time() + 7210)) {
             $data['hvac_until'] = 0;
@@ -29,6 +28,10 @@ class SystemStateController extends Controller
 
         $state = SystemState::firstOrCreate();
         $oldState = $state->replicate();
+
+        if (isset($data['enabled'])) {
+            $state->enabled = $data['enabled'];
+        }
 
         // Mode switching logic
         if (isset($data['mode'])) {
@@ -47,11 +50,6 @@ class SystemStateController extends Controller
                 if (isset($data['heating_on'])) {
                     $state->heating_on = $data['heating_on'];
                 }
-            }
-            // If switching to off, disable everything
-            elseif ($data['mode'] === 'off') {
-                $state->heating_on = false;
-                $state->cooling_on = false;
             }
         }
 
@@ -72,6 +70,12 @@ class SystemStateController extends Controller
         // Cooling on/off (only if in cooling mode)
         if (isset($data['cooling_on']) && $state->mode === 'cooling') {
             $state->cooling_on = $data['cooling_on'];
+        }
+
+        // If disabled and no boost, force everything off
+        if (!$state->enabled && ($state->hvac_until === 0 || $state->hvac_until < time())) {
+            $state->heating_on = false;
+            $state->cooling_on = false;
         }
 
         // Log state changes

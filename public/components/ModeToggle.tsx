@@ -3,7 +3,6 @@
 import { Mode } from '@/types/types';
 import { useEffect, useRef, useState } from 'react';
 import SnowflakeIcon from './SnowflakeIcon';
-import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 interface ModeToggleProps {
     mode: Mode;
@@ -22,15 +21,13 @@ export default function ModeToggle({ mode, onChangeMode, disabled, hvacOn }: Mod
                 return { icon: <span className={isCurrent ? "text-3xl" : "text-xl"}>🔥</span>, label: 'Heating' };
             case 'cooling':
                 return { icon: <SnowflakeIcon isOn={hvacOn && isCurrent} size={isCurrent ? 32 : 24} />, label: 'Cooling' };
-            case 'off':
-                return { icon: <PowerSettingsNewIcon className={isCurrent ? "text-3xl" : "text-xl"} />, label: 'Off' };
             default:
                 return { icon: '?', label: 'Unknown' };
         }
     };
 
     const currentConfig = getModeConfig(mode, true);
-    const modes: Mode[] = ['heating', 'cooling', 'off'];
+    const modes: Mode[] = ['heating', 'cooling'];
 
     useEffect(() => {
         if (!open) return;

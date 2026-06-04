@@ -17,6 +17,7 @@ class PiController extends Controller
         return [
             'temperature' => $latestTemp->value,
             'last_updated' => $latestTemp->timestamp,
+            'enabled' => boolval($systemState->enabled),
             'mode' => $systemState->mode ?? 'heating',
             'heating_on' => boolval($systemState->heating_on),
             'cooling_on' => boolval($systemState->cooling_on),

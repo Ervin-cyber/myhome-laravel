@@ -14,13 +14,14 @@ class SystemState extends Model
 
     protected $keyType = 'integer';
 
-    protected $fillable = ['target_temp', 'hvac_until', 'heating_on', 'mode', 'cooling_on'];
+    protected $fillable = ['target_temp', 'hvac_until', 'heating_on', 'mode', 'cooling_on', 'enabled'];
 
     public $timestamps = false;
 
     protected $casts = [
         'heating_on' => 'boolean',
         'cooling_on' => 'boolean',
+        'enabled' => 'boolean',
     ];
 
     protected static function booted()

@@ -29,7 +29,7 @@ services:
       - app-network
 
   # WebSocket Server
-  laravel-reverb:
+  reverb:
     build:
       context: ./api
       dockerfile: Dockerfile
@@ -82,7 +82,7 @@ services:
     depends_on:
       - laravel
       - nextjs
-      - laravel-reverb
+      - reverb
     networks:
       - app-network
 

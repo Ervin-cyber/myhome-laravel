@@ -16,11 +16,12 @@ import ACUnitIcon from './ACUnitIcon';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 export default function Dashboard(): JSX.Element {
-    const { data, stats, isSaving, saveState, changeMode } = useThermostat();
+    const { data, stats, isSaving, saveState, changeMode, togglePower } = useThermostat();
 
-    const { currentTemp, targetTemp, heating, cooling, mode, hvacUntil, lastUpdated } = data;
+    const { currentTemp, targetTemp, heating, cooling, mode, enabled, hvacUntil, lastUpdated } = data;
     const colors = getThemeColors(mode) || { gradient: 'from-gray-700 to-gray-800', shadowColor: 'shadow-gray-900', text: 'text-gray-400' };
     const isActive = (mode === 'heating' && heating) || (mode === 'cooling' && cooling);
+    const isBoosting = hvacUntil > 0;
 
     const quickTemps = mode === 'heating' ? [19, 20, 21, 22] : (mode === 'cooling' ? [24, 25, 26, 28] : []);
 
@@ -44,9 +45,7 @@ export default function Dashboard(): JSX.Element {
                                 {
                                     mode === 'cooling' ?
                                         <ACUnitIcon size={32} isOn={isActive} /> :
-                                        mode === 'heating' ?
-                                            <HeatingIcon size={28} isOn={isActive} /> :
-                                            <PowerSettingsNewIcon sx={{ color: 'white', fontSize: 28 }} />
+                                        <HeatingIcon size={28} isOn={isActive} />
                                 }
                             </div>
                             <div>
@@ -75,13 +74,21 @@ export default function Dashboard(): JSX.Element {
                             </div>
 
                             <div className="flex items-center gap-4 mb-6">
-                                <div className="flex items-center justify-center">
+                                <div className="flex items-center justify-center gap-3">
                                     <ModeToggle 
                                         mode={mode}
                                         onChangeMode={changeMode}
                                         disabled={isSaving}
                                         hvacOn={heating || cooling}
                                     />
+                                    <button
+                                        onClick={togglePower}
+                                        disabled={isSaving}
+                                        title={enabled ? "Turn Off" : "Turn On"}
+                                        className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 shadow-xl ${isSaving ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${enabled ? 'bg-red-500/20 hover:bg-red-500/30 text-red-500' : 'bg-gray-700 hover:bg-gray-600 text-gray-400'}`}
+                                    >
+                                        <PowerSettingsNewIcon sx={{ fontSize: 32 }} />
+                                    </button>
                                 </div>
                                 <div className="text-5xl md:text-6xl font-light text-white">
                                     {currentTemp?.toFixed(2)}
@@ -99,14 +106,15 @@ export default function Dashboard(): JSX.Element {
                             <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${isActive
                                     ? `${colors.text} ${mode === 'heating' ? 'bg-orange-500/20' : 'bg-blue-500/20'}`
-                                    : 'bg-green-500/20 text-green-400'}`}>
-                                    <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-current animate-pulse' : 'bg-green-400'}`} />
-                                    {mode === 'off'
-                                        ? 'System Standby'
+                                    : (enabled || isBoosting) ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                                    <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-current animate-pulse' : (enabled || isBoosting) ? 'bg-green-400' : 'bg-gray-400'}`} />
+                                    {!enabled && !isBoosting
+                                        ? 'System Off'
                                         : mode === 'heating'
-                                            ? (heating ? '🔥 Heating...' : 'Heating off')
-                                            : (cooling ? '❄️ Cooling...' : 'Cooling off')
+                                            ? (heating ? '🔥 Heating...' : 'Heating Standby')
+                                            : (cooling ? '❄️ Cooling...' : 'Cooling Standby')
                                     }
+                                    {isBoosting && <span className="ml-1 text-xs opacity-70">(Boost active)</span>}
                                 </div>
                             </div>
                         </div>
@@ -117,19 +125,19 @@ export default function Dashboard(): JSX.Element {
 
                             <div className="flex items-center justify-center gap-4 my-8">
                                 <button 
-                                    disabled={isSaving || mode === 'off'} 
+                                    disabled={isSaving || (!enabled && !isBoosting)} 
                                     onClick={() => saveState(Math.max(10, targetTemp - 0.5), hvacUntil)}
-                                    className={`w-14 h-14 rounded-xl text-white text-2xl font-light transition-all active:scale-95 ${isSaving || mode === 'off' ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                                    className={`w-14 h-14 rounded-xl text-white text-2xl font-light transition-all active:scale-95 ${isSaving || (!enabled && !isBoosting) ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600'}`}>
                                     −
                                 </button>
                                 <div className="w-32 text-center">
-                                    <span className={`text-5xl font-light ${mode === 'off' ? 'text-gray-500' : 'text-white'}`}>{targetTemp}</span>
+                                    <span className={`text-5xl font-light ${(!enabled && !isBoosting) ? 'text-gray-500' : 'text-white'}`}>{targetTemp}</span>
                                     <span className="text-2xl text-gray-400">°C</span>
                                 </div>
                                 <button 
-                                    disabled={isSaving || mode === 'off'} 
+                                    disabled={isSaving || (!enabled && !isBoosting)} 
                                     onClick={() => saveState(Math.min(30, targetTemp + 0.5), hvacUntil)}
-                                    className={`w-14 h-14 rounded-xl text-white text-2xl font-light transition-all active:scale-95 ${isSaving || mode === 'off' ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                                    className={`w-14 h-14 rounded-xl text-white text-2xl font-light transition-all active:scale-95 ${isSaving || (!enabled && !isBoosting) ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600'}`}>
                                     +
                                 </button>
                             </div>
@@ -143,10 +151,10 @@ export default function Dashboard(): JSX.Element {
                         <div className="grid grid-cols-4 sm:grid-cols-8 gap-3 mt-4">
                             {quickTemps.map((t, i) => (
                                 <button key={i} onClick={() => saveState(t, hvacUntil)}
-                                    disabled={isSaving}
+                                    disabled={isSaving || (!enabled && !isBoosting)}
                                     className={`py-3 rounded-xl font-medium transition-all active:scale-95 ${targetTemp === t
                                         ? `bg-gradient-to-r ${colors.gradient} text-white shadow-lg ${colors.shadowColor}/25`
-                                        : 'bg-gray-700/50 hover:bg-gray-600/50 text-gray-300 border border-gray-600/50'}`}>
+                                        : 'bg-gray-700/50 hover:bg-gray-600/50 text-gray-300 border border-gray-600/50 disabled:opacity-50 disabled:cursor-not-allowed'}`}>
                                     {t}°C
                                 </button>
                             ))}
@@ -157,33 +165,24 @@ export default function Dashboard(): JSX.Element {
                     {/* Boost Timers */}
                     <div className="mt-3 bg-gray-800/50 backdrop-blur rounded-2xl p-3 border border-gray-700/50">
                         <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Boost HVAC</span>
-                        <div className="grid grid-cols-2 gap-3 mt-3">
-                            <button
-                                onClick={() => saveState(targetTemp, 30)}
-                                disabled={hvacUntil !== 0 || mode === 'off'}
-                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${hvacUntil !== 0 || mode === 'off'
-                                    ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed'
-                                    : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/50'
-                                    }`}>
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                30 min
-                            </button>
-                            <button
-                                onClick={() => saveState(targetTemp, 60)}
-                                disabled={hvacUntil !== 0 || mode === 'off'}
-                                className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${hvacUntil !== 0 || mode === 'off'
-                                    ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed'
-                                    : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/50'
-                                    }`}>
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                60 min
-                            </button>
+                        <div className="grid grid-cols-3 gap-3 mt-3">
+                            {[15, 30, 60].map((mins) => (
+                                <button
+                                    key={mins}
+                                    onClick={() => saveState(targetTemp, mins)}
+                                    disabled={isBoosting}
+                                    className={`py-3 rounded-xl font-medium transition-all active:scale-95 flex items-center justify-center gap-2 ${isBoosting
+                                        ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed'
+                                        : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/50'
+                                        }`}>
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    {mins} min
+                                </button>
+                            ))}
                         </div>
-                        {hvacUntil !== 0 && (
+                        {isBoosting && (
                             <button
                                 onClick={() => saveState(targetTemp, 0)}
                                 className="w-full mt-2 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium transition-all">
