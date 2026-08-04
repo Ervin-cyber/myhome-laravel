@@ -1,5 +1,5 @@
 import { createEcho } from '@/lib/echo';
-import { FetchLatestDataResponse, LiveReadingEvent, Mode, Stat, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
+import { AirConditioner, FetchLatestDataResponse, LiveReadingEvent, Mode, Stat, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRefetchOnFocus } from './useRefetchOnFocus';
 import { useNotification } from '@/context/NotificationContext';
@@ -7,6 +7,9 @@ import { useNotification } from '@/context/NotificationContext';
 export function useThermostat() {
     const { showNotification } = useNotification();
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+    // Debounce timers and coalesced payloads, keyed by AC id.
+    const acTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
+    const acWritesRef = useRef<Map<number, Partial<AirConditioner>>>(new Map());
 
     const [data, setData] = useState<ThermostatData>({
         currentTemp: 0,
@@ -17,9 +20,13 @@ export function useThermostat() {
         enabled: true,
         hvacUntil: 0,
         lastUpdated: null,
+        airConditioners: [],
+        rooms: [],
     });
     const [stats, setStats] = useState<Stat | undefined>();
     const [isSaving, setIsSaving] = useState(false);
+    // Per-unit, so adjusting one AC does not freeze the controls of the others.
+    const [pendingAcIds, setPendingAcIds] = useState<number[]>([]);
 
     const processUpdate = useCallback((tempData: TemperatureResponse, stateData: SystemStateResponse) => {
         setData(prev => ({
@@ -32,6 +39,8 @@ export function useThermostat() {
             enabled: stateData?.enabled ?? prev.enabled,
             targetTemp: stateData?.target_temp ?? prev.targetTemp,
             hvacUntil: stateData?.hvac_until ?? prev.hvacUntil,
+            airConditioners: stateData?.air_conditioners ?? prev.airConditioners,
+            rooms: stateData?.rooms ?? prev.rooms,
         }));
     }, []);
 
@@ -106,15 +115,21 @@ export function useThermostat() {
                             mode: r.mode ?? 'heating',
                             enabled: r.enabled ?? true,
                             targetTemp: r.set_temp,
-                            hvacUntil: r.hvac_until ?? 0
+                            hvacUntil: r.hvac_until ?? 0,
+                            airConditioners: r.air_conditioners ?? [],
+                            rooms: r.rooms ?? []
                         });
                     }
                 });
         }
 
+        const acTimers = acTimersRef.current;
+
         return () => {
             clearInterval(pollInterval);
             if (echo) echo.leave('live-updates');
+            acTimers.forEach(clearTimeout);
+            acTimers.clear();
         };
     }, [refreshData, fetchStats]);
 
@@ -127,6 +142,57 @@ export function useThermostat() {
         if (!res.ok) throw new Error('Failed to save state');
         return res.json();
     }, [fetchClient]);
+
+    const flushAcState = useCallback(async (acId: number) => {
+        const body = acWritesRef.current.get(acId);
+        acWritesRef.current.delete(acId);
+        acTimersRef.current.delete(acId);
+
+        if (!body) return;
+
+        try {
+            const res = await fetchClient(`/proxy/api/air-conditioners/${acId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!res.ok) throw new Error('Failed to update AC');
+
+            const saved: AirConditioner = await res.json();
+            setData(prev => ({
+                ...prev,
+                airConditioners: prev.airConditioners.map(ac => (ac.id === acId ? saved : ac)),
+            }));
+        } catch (error) {
+            console.error(error);
+            showNotification('Failed to update AC', 'error');
+            // Roll the optimistic change back to whatever the server last told us.
+            refreshData();
+        } finally {
+            setPendingAcIds(prev => prev.filter(id => id !== acId));
+        }
+    }, [fetchClient, showNotification, refreshData]);
+
+    const updateAcState = useCallback((acId: number, body: Partial<AirConditioner>) => {
+        // Optimistic: the stepper must feel instant. The response, and the
+        // broadcast that follows it, are the source of truth and overwrite this.
+        setData(prev => ({
+            ...prev,
+            airConditioners: prev.airConditioners.map(ac =>
+                ac.id === acId ? { ...ac, ...body } : ac
+            ),
+        }));
+
+        setPendingAcIds(prev => (prev.includes(acId) ? prev : [...prev, acId]));
+
+        // Coalesce rapid stepper taps into a single write per unit.
+        acWritesRef.current.set(acId, { ...acWritesRef.current.get(acId), ...body });
+
+        const existing = acTimersRef.current.get(acId);
+        if (existing) clearTimeout(existing);
+
+        acTimersRef.current.set(acId, setTimeout(() => { flushAcState(acId); }, 300));
+    }, [flushAcState]);
 
     const saveState = async (val: number, until: number) => {
         if (val < 10 || until < 0) return;
@@ -202,9 +268,11 @@ export function useThermostat() {
         data,
         stats,
         isSaving,
+        pendingAcIds,
         saveState,
         refreshData,
         changeMode,
-        togglePower
+        togglePower,
+        updateAcState
     };
 }

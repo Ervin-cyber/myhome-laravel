@@ -5,8 +5,9 @@ import sys
 import RPi.GPIO as GPIO
 import requests
 import json
-import websocket 
+import websocket
 import os
+import threading
 from greeclimate.discovery import Discovery
 from greeclimate.device import Device
 import asyncio
@@ -14,9 +15,21 @@ from dotenv import load_dotenv
 
 # Global variable to store found and paired AC units
 GREE_DEVICES = {}
-gree_lock = None # Initialized in the event loop
+gree_lock = None # Initialized on the AC event loop
 last_gree_scan = 0
 ws_app = None
+
+# All Gree I/O runs on one long-lived event loop in a background thread.
+# The bound Device objects own transports tied to the loop that created them,
+# so a fresh asyncio.run() per command would talk to a closed loop.
+ac_loop = None
+ac_loop_thread = None
+
+# Last state actually pushed to each unit, keyed by IP: (power, target_temp, sent_at).
+# Used to skip redundant LAN commands — the broadcast payload changes on every
+# sensor reading, but the units only need a command when the desired state changes.
+last_sent_ac_state = {}
+AC_RESEND_INTERVAL = 600  # re-assert state at least every 10 min, in case of remote-control changes
 
 load_dotenv()     
 
@@ -31,13 +44,8 @@ APP_KEY = os.getenv('APP_KEY')
 CHANNEL_NAME = os.getenv('CHANNEL_NAME')
 EVENT_NAME = os.getenv('EVENT_NAME')
 
-# Reading clients from .env
-GREE_CORRIDOR_NAME = os.getenv('GREE_CORRIDOR_NAME')
-GREE_CORRIDOR_IP = os.getenv('GREE_CORRIDOR_IP')
-GREE_CORRIDOR_MAC = os.getenv('GREE_CORRIDOR_MAC')
-GREE_BEDROOM_NAME = os.getenv('GREE_BEDROOM_NAME')
-GREE_BEDROOM_IP = os.getenv('GREE_BEDROOM_IP')
-GREE_BEDROOM_MAC = os.getenv('GREE_BEDROOM_MAC')
+# AC units are no longer configured here: they are discovered on the LAN and
+# stored in the air_conditioners table, then delivered in the broadcast payload.
 
 NTFY_TOPIC = os.getenv('NTFY_TOPIC')
 NOTIFY_COOLDOWN = 3600 # 1 hour
@@ -46,7 +54,11 @@ last_notifications = {}
 def handle_exit(sig, frame):
     print("Stopping service — turning relay OFF")
     set_heating_relay(False)
-    set_cooling_relay(False, 30) # This now turns off the AC units
+    try:
+        turn_off_all_acs()
+    except Exception as e:
+        # Never let an AC failure prevent the GPIO relay from being released.
+        print(f"Error turning off AC units during shutdown: {e}")
     GPIO.cleanup()
     sys.exit(0)
 
@@ -111,11 +123,51 @@ def set_heating_relay(on):
     GPIO.output(HEATING_RELAY_PIN, GPIO.HIGH if on else GPIO.LOW)
     print(f'set_heating_relay:{on}')
 
-# --- NEW GREE AC CONTROLLER SECTION ---
+# --- GREE AC CONTROLLER SECTION ---
+
+def start_ac_loop():
+    """Start the dedicated event loop that owns every Gree connection."""
+    global ac_loop, ac_loop_thread
+
+    if ac_loop is not None:
+        return
+
+    ac_loop = asyncio.new_event_loop()
+    ac_loop_thread = threading.Thread(
+        target=ac_loop.run_forever, name="gree-loop", daemon=True
+    )
+    ac_loop_thread.start()
+
+def run_on_ac_loop(coro, timeout=60):
+    """Run a coroutine on the AC loop from the (synchronous) websocket thread."""
+    if ac_loop is None:
+        start_ac_loop()
+
+    future = asyncio.run_coroutine_threadsafe(coro, ac_loop)
+    try:
+        return future.result(timeout=timeout)
+    except Exception as e:
+        future.cancel()
+        print(f"AC loop task failed: {type(e).__name__} - {e}")
+        return None
+
+def post_ac_sync(devices):
+    """Report discovered units (and their indoor readings) to the API."""
+    if not devices:
+        return
+
+    try:
+        requests.post(f"{API_ENDPOINT}/air-conditioners/sync",
+                      json={'devices': devices},
+                      headers=Headers,
+                      timeout=5)
+        print(f"Synced {len(devices)} AC units to the database.")
+    except Exception as e:
+        print(f"Failed to sync ACs to the database: {e}")
 
 async def init_gree_ac():
     global GREE_DEVICES, gree_lock, last_gree_scan
-    
+
     # 30-second cooldown between scans to avoid overloading the network
     if time.time() - last_gree_scan < 30:
         return
@@ -125,72 +177,171 @@ async def init_gree_ac():
         gree_lock = asyncio.Lock()
 
     print("Scanning and pairing AC units on the network...")
-    
+
     try:
         discovery = Discovery()
         devices = await discovery.scan(wait_for=5)
-        
+
+        devices_to_sync = []
         for device_info in devices:
-            if device_info.ip in GREE_DEVICES:
+            entry = {
+                'name': device_info.name,
+                'ip': device_info.ip,
+                'mac': device_info.mac,
+                'port': device_info.port
+            }
+            devices_to_sync.append(entry)
+
+            # Units are keyed by MAC, not IP: a DHCP lease change must not look
+            # like a new unit, or the room it belongs to would be lost.
+            if device_info.mac in GREE_DEVICES:
                 continue
-                
+
             try:
                 device = Device(device_info)
                 await device.bind()
-                GREE_DEVICES[device_info.ip] = device
+                GREE_DEVICES[device_info.mac] = device
                 print(f"AC successfully paired! IP: {device_info.ip}, Mac: {device_info.mac}")
-                
+
+                # Capture the unit's own indoor sensor while we are connected.
+                try:
+                    await asyncio.wait_for(device.update_state(), timeout=5.0)
+                    if device.current_temperature is not None:
+                        entry['reported_temp'] = device.current_temperature
+                except Exception:
+                    pass  # Reading the indoor sensor is best-effort, never fatal to pairing.
+
             except Exception as e:
                 err_msg = str(e) if str(e) else "Timeout (No response)"
                 print(f"Error pairing {device_info.ip}: {err_msg}")
                 send_ntfy_alert(f"Error pairing AC unit {device_info.ip}: {err_msg}", "warning", key=f"ac_init_{device_info.ip}")
+
+        post_ac_sync(devices_to_sync)
+
     except Exception as e:
         print(f"Error during search: {e}")
 
-async def send_gree_command(ip, power_on, target_temp):
+async def send_gree_command(ac, power_on, target_temp):
+    """Push desired state to one unit. Returns a sync entry if a reading was observed."""
     global GREE_DEVICES, gree_lock
-    
-    device = GREE_DEVICES.get(ip)
+
+    mac = ac.get('mac')
+    ip = ac.get('ip')
+
+    device = GREE_DEVICES.get(mac)
     if not device:
          print(f"[{ip}] AC not in list, attempting to reconnect...")
          await init_gree_ac()
-         device = GREE_DEVICES.get(ip)
-         
+         device = GREE_DEVICES.get(mac)
+
     if not device:
          # If still not found, do nothing
-         return
+         return None
 
     print(f"send_gree_command: IP={ip}, Power={power_on}, TargetTemp={target_temp}")
     async with gree_lock:
         try:
             await asyncio.wait_for(device.update_state(), timeout=5.0)
-            
+
             device.power = power_on
             if power_on:
                 device.target_temperature = int(float(target_temp))
-            
+
             await asyncio.wait_for(device.push_state_update(), timeout=5.0)
             print(f"[{ip}] Gree command SUCCESSFUL: Power={power_on}, Temp={target_temp}°C")
+
+            last_sent_ac_state[mac] = (power_on, int(float(target_temp)), time.time())
+
+            observed = None
+            if device.current_temperature is not None:
+                observed = {
+                    'mac': mac,
+                    'name': ac.get('name') or mac,
+                    'ip': ip,
+                    'port': ac.get('port') or 7000,
+                    'reported_temp': device.current_temperature,
+                }
+
             await asyncio.sleep(1.5)
-            
+            return observed
+
         except Exception as e:
              err_msg = str(e) if str(e) else "TimeoutError (The AC unit did not respond)"
              print(f"[{ip}] Gree command error: {type(e).__name__} - {err_msg}")
-             
-             # If there is a communication error, remove it from the list to reconnect next time
-             if ip in GREE_DEVICES:
-                 del GREE_DEVICES[ip]
-                 
+
+             # On a communication error drop the binding and the cached desired
+             # state, so the next pass reconnects and re-asserts rather than
+             # assuming the unit already matches.
+             GREE_DEVICES.pop(mac, None)
+             last_sent_ac_state.pop(mac, None)
+
              send_ntfy_alert(f"Gree command error ({ip}): {err_msg}", "warning", key=f"ac_cmd_{ip}")
+             return None
 
-def set_cooling_relay(on, target_temp):
-    async def update_all_acs():
-        if GREE_CORRIDOR_IP:
-            await send_gree_command(GREE_CORRIDOR_IP, on, target_temp)
-        if GREE_BEDROOM_IP:
-            await send_gree_command(GREE_BEDROOM_IP, on, target_temp)
+def needs_command(mac, power_on, target_temp):
+    """Skip units already in the desired state, re-asserting periodically."""
+    previous = last_sent_ac_state.get(mac)
+    if previous is None:
+        return True
 
-    asyncio.run(update_all_acs())
+    prev_power, prev_temp, sent_at = previous
+
+    if time.time() - sent_at > AC_RESEND_INTERVAL:
+        return True
+
+    if prev_power != power_on:
+        return True
+
+    # Target temperature is irrelevant while the unit is off.
+    return power_on and prev_temp != int(float(target_temp))
+
+def apply_ac_state(ac_data, allow_cooling):
+    """
+    Drive every known unit. A split AC has its own thermostat, so we do not
+    bang-bang its power against the room temperature — that is what wears out a
+    compressor. We set power and setpoint, and let the unit regulate itself.
+    """
+    async def update_acs():
+        observed = []
+
+        for ac in ac_data:
+            mac = ac.get('mac')
+            if not mac:
+                continue
+
+            is_on = bool(allow_cooling) and bool(ac.get('enabled', True))
+            target_temp = ac.get('target_temp') or 24
+
+            if not needs_command(mac, is_on, target_temp):
+                continue
+
+            result = await send_gree_command(ac, is_on, target_temp)
+            if result:
+                observed.append(result)
+
+        return observed
+
+    observed = run_on_ac_loop(update_acs()) or []
+
+    # Report indoor readings so rooms sourcing temperature from their AC,
+    # and rooms showing it as a secondary value, stay current.
+    post_ac_sync(observed)
+
+def turn_off_all_acs():
+    """Force every unit we have ever paired with off. Used on shutdown."""
+    known = []
+    for mac, device in GREE_DEVICES.items():
+        info = getattr(device, 'device_info', None)
+        known.append({'mac': mac, 'ip': getattr(info, 'ip', None)})
+
+    if not known:
+        return
+
+    async def stop_all():
+        for ac in known:
+            await send_gree_command(ac, False, 24)
+
+    run_on_ac_loop(stop_all(), timeout=30)
 
 def process_hvac_control(home_data):
     global heating_on, cooling_on
@@ -200,6 +351,7 @@ def process_hvac_control(home_data):
     hvac_until = home_data.get('hvac_until') or 0
     mode = home_data.get('mode')
     enabled = home_data.get('enabled', True)
+    air_conditioners = home_data.get('air_conditioners', [])
     current_ts = int(time.time())
     
     is_boost_active = hvac_until > current_ts
@@ -211,7 +363,7 @@ def process_hvac_control(home_data):
             set_heating_relay(False)
         if cooling_on:
             cooling_on = False
-            set_cooling_relay(False, 30)
+        apply_ac_state(air_conditioners, allow_cooling=False)
         send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': 0 })
         return
 
@@ -221,11 +373,14 @@ def process_hvac_control(home_data):
             print("ACTION: System DISABLED. Turning everything OFF.")
             cooling_on = False
             heating_on = False
-            set_cooling_relay(False, 30) 
             set_heating_relay(False)
             send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': 0 })
         else:
             print(f"IDLE: System Off. Temp {temp}°C.")
+
+        # Always re-assert OFF: a unit switched on by its remote must be
+        # corrected even when our own tracked state was already off.
+        apply_ac_state(air_conditioners, allow_cooling=False)
         return
 
     # If we are here, system is either enabled OR boosting
@@ -234,19 +389,21 @@ def process_hvac_control(home_data):
             heating_on = False
             set_heating_relay(False)
 
-        if not cooling_on:
-            cooling_on = True
-            print(f"ACTION: Cooling mode active {'(BOOST)' if is_boost_active else ''}. Turning on AC units. Target: {set_temp}°C")
-            set_cooling_relay(True, set_temp)
-            send_state({ 'heating_on': 0, 'cooling_on': 1, 'hvac_until': hvac_until })
-        elif cooling_on and previous_control_data.get('set_temp') != set_temp:
-            print(f"ACTION: Target temperature changed: {set_temp}°C. Updating AC units.")
-            set_cooling_relay(True, set_temp)
+        # Each enabled unit runs against its own setpoint and regulates itself.
+        # House-level cooling_on means "at least one zone is running".
+        any_cooling = any(ac.get('enabled', True) for ac in air_conditioners)
+
+        print(f"ACTION: Cooling mode active. Driving {len(air_conditioners)} AC unit(s) independently.")
+        apply_ac_state(air_conditioners, allow_cooling=True)
+
+        if cooling_on != any_cooling:
+            cooling_on = any_cooling
+            send_state({ 'heating_on': 0, 'cooling_on': 1 if any_cooling else 0, 'hvac_until': hvac_until })
 
     elif mode == 'heating':
         if cooling_on:
             cooling_on = False
-            set_cooling_relay(False, 30)
+        apply_ac_state(air_conditioners, allow_cooling=False)
 
         should_heat = (temp <= (set_temp - TOLERANCE) or is_boost_active)
         should_stop = (temp >= (set_temp + TOLERANCE) and not is_boost_active)
@@ -328,7 +485,8 @@ if __name__ == '__main__':
         send_state({ 'heating_on': 0, 'cooling_on': 0, 'hvac_until': 0 })
 
         print("Initializing Gree AC devices...")
-        asyncio.run(init_gree_ac())
+        start_ac_loop()
+        run_on_ac_loop(init_gree_ac(), timeout=60)
 
         start_websocket_client()
     except Exception as e:
