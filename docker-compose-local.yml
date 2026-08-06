@@ -93,6 +93,11 @@ services:
       dockerfile: Dockerfile
     command: npm run dev
     container_name: nextjs-frontend-local
+    # The image runs as the unprivileged `nextjs` user, but ./public is
+    # bind-mounted from the host and owned by the host user, so `next dev`
+    # cannot write .next. Local development only; production keeps the
+    # unprivileged user from the Dockerfile.
+    user: root
     restart: unless-stopped
     volumes:
       - ./public:/app

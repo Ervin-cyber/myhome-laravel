@@ -44,21 +44,21 @@ class ClimateService
         $rooms = Room::with('airConditioners')->orderBy('sort_order')->get();
 
         $mode = $state?->mode ?? 'heating';
-        $systemActive = $this->isSystemActive($state, $rooms);
+        $masterOn = (bool) ($state?->enabled ?? false);
 
-        $boiler = $mode === 'heating' && $systemActive
-            ? $this->boilerDemand($rooms, $state)
+        $boiler = $mode === 'heating'
+            ? $this->boilerDemand($rooms, $state, $masterOn)
             : false;
 
         $units = [];
 
         foreach ($rooms as $room) {
-            $roomUnits = $this->commandsForRoom($room, $mode, $systemActive);
+            $roomUnits = $this->commandsForRoom($room, $mode, $masterOn);
             $units = array_merge($units, $roomUnits);
 
             $this->persistRoomState(
                 $room,
-                heating: $boiler && $room->heat_source === 'boiler' && $room->isActive(),
+                heating: $boiler && $room->heat_source === 'boiler' && $this->isRoomActive($room, $masterOn),
                 cooling: collect($roomUnits)->contains(fn ($u) => $u['power'] && $u['mode'] === 'cool'),
             );
         }
@@ -68,7 +68,7 @@ class ClimateService
         foreach (AirConditioner::whereNull('room_id')->get() as $ac) {
             $units[] = $this->unitCommand(
                 $ac,
-                power: $systemActive && $mode === 'cooling' && $ac->enabled,
+                power: $masterOn && $mode === 'cooling' && $ac->enabled,
                 mode: 'cool',
                 target: (float) $ac->target_temp,
             );
@@ -83,22 +83,20 @@ class ClimateService
     }
 
     /**
-     * The house acts when the master switch is on, or while any room boosts.
+     * A room acts on its own account: the master switch gates the rooms that
+     * are merely enabled, but a boost stands on its own. Boosting one room
+     * must never wake the others.
      */
-    private function isSystemActive(?SystemState $state, Collection $rooms): bool
+    private function isRoomActive(Room $room, bool $masterOn): bool
     {
-        if ($state?->enabled) {
-            return true;
-        }
-
-        return $rooms->contains(fn (Room $room) => $room->is_boosting);
+        return ($masterOn && $room->enabled) || $room->is_boosting;
     }
 
     /**
      * One boiler, one relay, so a single reference room regulates it. Any
      * boiler-heated room that is boosting can additionally force it on.
      */
-    private function boilerDemand(Collection $rooms, ?SystemState $state): bool
+    private function boilerDemand(Collection $rooms, ?SystemState $state, bool $masterOn): bool
     {
         $boosting = $rooms->contains(
             fn (Room $room) => $room->heat_source === 'boiler' && $room->is_boosting
@@ -110,7 +108,7 @@ class ClimateService
 
         $reference = $rooms->firstWhere('drives_boiler', true);
 
-        if (! $reference || ! $reference->enabled) {
+        if (! $reference || ! $this->isRoomActive($reference, $masterOn)) {
             return false;
         }
 
@@ -144,9 +142,9 @@ class ClimateService
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function commandsForRoom(Room $room, string $mode, bool $systemActive): array
+    private function commandsForRoom(Room $room, string $mode, bool $masterOn): array
     {
-        $active = $systemActive && $room->isActive();
+        $active = $this->isRoomActive($room, $masterOn);
 
         // A room heated by its own unit runs it as a heat pump; a room on the
         // boiler leaves its unit idle all winter.

@@ -161,6 +161,27 @@ class ClimateServiceTest extends TestCase
         );
     }
 
+    public function test_boosting_one_room_does_not_wake_the_others(): void
+    {
+        $this->house(['mode' => 'cooling', 'enabled' => false]);
+        $bedroom = $this->bedroom(['enabled' => true, 'hvac_until' => 0]);
+        $living = $this->living(['enabled' => true, 'hvac_until' => time() + 900]);
+
+        $bedroomAc = $this->unit($bedroom);
+        $livingAc = $this->unit($living);
+
+        $control = $this->climate->evaluate();
+
+        $this->assertTrue(
+            $this->unitFor($control, $livingAc->mac)['power'],
+            'The boosting room must run despite the master switch being off.'
+        );
+        $this->assertFalse(
+            $this->unitFor($control, $bedroomAc->mac)['power'],
+            'A boost is local: it must not switch on a room that is not boosting.'
+        );
+    }
+
     public function test_an_expired_boost_no_longer_forces_heat(): void
     {
         $this->house(['mode' => 'heating', 'enabled' => false]);
