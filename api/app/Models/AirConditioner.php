@@ -23,6 +23,7 @@ class AirConditioner extends Model
         'reported_temp',
         'reported_at',
         'calibration_offset',
+        'power_changed_at',
     ];
 
     protected $casts = [
@@ -34,6 +35,7 @@ class AirConditioner extends Model
         'reported_temp' => 'float',
         'reported_at' => 'datetime',
         'calibration_offset' => 'float',
+        'power_changed_at' => 'datetime',
     ];
 
     protected $appends = ['calibrated_temp'];

@@ -6,6 +6,7 @@ use App\Models\SystemState;
 use App\Models\TemperatureReading;
 use App\Models\AirConditioner;
 use App\Models\Room;
+use App\Services\ClimateService;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -23,7 +24,12 @@ class LiveReadingCreated implements ShouldBroadcastNow
         $latestTemp = TemperatureReading::getLatestTemperature();
         $systemState = SystemState::first();
 
+        // Evaluate before reading rooms back, so the payload carries the state
+        // the controller just decided rather than the previous one.
+        $control = app(ClimateService::class)->evaluate();
+
         $this->reading = [
+            'control' => $control,
             'temperature' => $latestTemp?->value,
             'last_updated' => $latestTemp?->timestamp,
             'enabled' => boolval($systemState?->enabled),
