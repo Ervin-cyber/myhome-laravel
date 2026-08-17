@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AirConditioner;
+use App\Models\Room;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
@@ -27,6 +28,53 @@ class AirConditionerTest extends TestCase
             'ip' => '192.168.1.50',
             'port' => 7000,
         ], $overrides);
+    }
+
+    public function test_sync_places_known_units_in_their_configured_room(): void
+    {
+        config(['climate.ac_rooms' => ['580d0d3b0096' => 'bedroom']]);
+
+        // Separators and case differ from the config entry on purpose.
+        $this->postJson('/api/air-conditioners/sync', [
+            'devices' => [$this->device(['mac' => '58:0D:0D:3B:00:96'])],
+        ])->assertOk();
+
+        $ac = AirConditioner::where('mac', '58:0D:0D:3B:00:96')->firstOrFail();
+
+        $this->assertSame(
+            Room::where('slug', 'bedroom')->value('id'),
+            $ac->room_id,
+            'A unit is bolted to a wall; discovery should place it without help.'
+        );
+    }
+
+    public function test_sync_does_not_override_a_room_chosen_in_the_dashboard(): void
+    {
+        config(['climate.ac_rooms' => ['580d0d3b0096' => 'bedroom']]);
+
+        $living = Room::where('slug', 'living')->firstOrFail();
+        AirConditioner::create($this->device(['mac' => '580d0d3b0096', 'room_id' => $living->id]));
+
+        $this->postJson('/api/air-conditioners/sync', [
+            'devices' => [$this->device(['mac' => '580d0d3b0096'])],
+        ])->assertOk();
+
+        $this->assertSame(
+            $living->id,
+            AirConditioner::where('mac', '580d0d3b0096')->value('room_id'),
+            'Config fills a gap; it does not overrule a deliberate choice.'
+        );
+    }
+
+    public function test_sync_leaves_an_unknown_unit_unassigned(): void
+    {
+        config(['climate.ac_rooms' => ['580d0d3b0096' => 'bedroom']]);
+
+        $this->postJson('/api/air-conditioners/sync', [
+            'devices' => [$this->device(['mac' => 'aa:bb:cc:dd:ee:09'])],
+        ])->assertOk();
+
+        $this->assertNull(AirConditioner::where('mac', 'aa:bb:cc:dd:ee:09')->value('room_id'));
     }
 
     public function test_sync_preserves_user_settings_and_renames(): void

@@ -20,6 +20,12 @@ class ClimateService
     public const TOLERANCE = 0.2;
 
     /**
+     * A wider deadband for compressors. The boiler may chase a tight band, but
+     * a split must not power-cycle over half a degree of drift.
+     */
+    public const AC_TOLERANCE = 0.5;
+
+    /**
      * A compressor that is restarted immediately after stopping will fail
      * early, so a unit stays off for at least this long once switched off.
      */
@@ -112,7 +118,7 @@ class ClimateService
             return false;
         }
 
-        return $this->thermostat(
+        return $this->demandsHeat(
             $reference->current_temp,
             (float) $reference->target_temp,
             currentlyOn: (bool) ($state?->heating_on ?? false),
@@ -120,18 +126,29 @@ class ClimateService
     }
 
     /**
-     * Hysteresis around the setpoint. Returns false whenever the reading is
-     * missing or implausible: heating on a guess is worse than not heating.
+     * Hysteresis around the setpoint. Both directions return false whenever the
+     * reading is missing or implausible: acting on a guess is worse than idling.
      */
-    private function thermostat(?float $temp, float $target, bool $currentlyOn): bool
+    private function demandsHeat(?float $temp, float $target, bool $currentlyOn, float $tolerance = self::TOLERANCE): bool
     {
         if (! $this->isPlausible($temp)) {
             return false;
         }
 
         return $currentlyOn
-            ? $temp < ($target + self::TOLERANCE)
-            : $temp <= ($target - self::TOLERANCE);
+            ? $temp < ($target + $tolerance)
+            : $temp <= ($target - $tolerance);
+    }
+
+    private function demandsCool(?float $temp, float $target, bool $currentlyOn, float $tolerance = self::TOLERANCE): bool
+    {
+        if (! $this->isPlausible($temp)) {
+            return false;
+        }
+
+        return $currentlyOn
+            ? $temp > ($target - $tolerance)
+            : $temp >= ($target + $tolerance);
     }
 
     private function isPlausible(?float $temp): bool
@@ -144,26 +161,49 @@ class ClimateService
      */
     private function commandsForRoom(Room $room, string $mode, bool $masterOn): array
     {
-        $active = $this->isRoomActive($room, $masterOn);
+        // The house mode decides what a unit would do; nothing is set per unit.
+        $unitMode = $mode === 'heating' ? 'heat' : 'cool';
 
         // A room heated by its own unit runs it as a heat pump; a room on the
         // boiler leaves its unit idle all winter.
-        $heatByAc = $active
-            && $mode === 'heating'
-            && $room->heat_source === 'ac'
-            && $this->thermostat($room->current_temp, (float) $room->target_temp, $room->heating_on);
+        $hasAJob = $mode === 'cooling' || $room->heat_source === 'ac';
 
-        $cool = $active && $mode === 'cooling';
+        $power = $hasAJob
+            && $this->isRoomActive($room, $masterOn)
+            && $this->roomDemands($room, $unitMode);
 
         return $room->airConditioners
             ->map(fn (AirConditioner $ac) => $this->unitCommand(
                 $ac,
-                power: $ac->enabled && ($cool || $heatByAc),
-                mode: $heatByAc ? 'heat' : 'cool',
+                power: $ac->enabled && $power,
+                mode: $unitMode,
                 // The room owns the setpoint; every unit in it shares one target.
                 target: (float) $room->target_temp,
             ))
             ->all();
+    }
+
+    /**
+     * Whether the room still wants its unit running.
+     *
+     * A room with its own sensor gets a real thermostat, so the unit stops once
+     * the room is comfortable. A room that reads its temperature *off* the unit
+     * cannot: a powered-off Gree stops reporting, so switching it off would
+     * freeze the reading at the value that caused the switch-off, and nothing
+     * would ever ask it to start again. Those rooms stay powered and leave the
+     * regulating to the split's own inverter, which is what it is good at.
+     */
+    private function roomDemands(Room $room, string $unitMode): bool
+    {
+        if ($room->temp_source === 'ac') {
+            return true;
+        }
+
+        $target = (float) $room->target_temp;
+
+        return $unitMode === 'heat'
+            ? $this->demandsHeat($room->current_temp, $target, $room->heating_on, self::AC_TOLERANCE)
+            : $this->demandsCool($room->current_temp, $target, $room->cooling_on, self::AC_TOLERANCE);
     }
 
     /**

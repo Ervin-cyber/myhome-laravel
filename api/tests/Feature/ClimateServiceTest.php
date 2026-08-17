@@ -193,7 +193,7 @@ class ClimateServiceTest extends TestCase
     public function test_cooling_drives_each_room_independently(): void
     {
         $this->house(['mode' => 'cooling']);
-        $bedroom = $this->bedroom(['target_temp' => 22, 'enabled' => true]);
+        $bedroom = $this->bedroom(['target_temp' => 22, 'current_temp' => 25, 'enabled' => true]);
         $living = $this->living(['target_temp' => 25, 'enabled' => false]);
 
         $bedroomAc = $this->unit($bedroom);
@@ -211,6 +211,49 @@ class ClimateServiceTest extends TestCase
         $this->assertFalse(
             $this->unitFor($control, $livingAc->mac)['power'],
             'A switched-off room must not run its unit.'
+        );
+    }
+
+    public function test_a_sensed_room_stops_cooling_once_it_is_cold_enough(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $bedroom = $this->bedroom(['target_temp' => 24, 'current_temp' => 21, 'cooling_on' => true]);
+        $ac = $this->unit($bedroom);
+
+        $this->assertFalse(
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['power'],
+            'Cooling a room that is already three degrees below target is just waste.'
+        );
+    }
+
+    public function test_a_sensed_room_does_not_cycle_inside_the_compressor_deadband(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $bedroom = $this->bedroom(['target_temp' => 24, 'current_temp' => 24.3, 'cooling_on' => false]);
+        $ac = $this->unit($bedroom);
+
+        $this->assertFalse(
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['power'],
+            'A third of a degree over target must not start a compressor.'
+        );
+
+        $bedroom = $this->bedroom(['target_temp' => 24, 'current_temp' => 24.6, 'cooling_on' => false]);
+
+        $this->assertTrue($this->unitFor($this->climate->evaluate(), $ac->mac)['power']);
+    }
+
+    public function test_a_room_sensed_by_its_own_unit_keeps_the_unit_powered(): void
+    {
+        // Switching this unit off would freeze its reading at the value that
+        // switched it off, and nothing would ever ask it to start again.
+        $this->house(['mode' => 'cooling']);
+        $living = $this->living(['target_temp' => 25, 'current_temp' => 20]);
+        $ac = $this->unit($living);
+
+        $this->assertSame('ac', $living->temp_source);
+        $this->assertTrue(
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['power'],
+            'A room that reads its temperature off the unit must not switch it off.'
         );
     }
 

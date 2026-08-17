@@ -52,9 +52,15 @@ class AirConditionerController extends Controller
                 $ac->name = $device['name'];
             }
 
+            // A unit is bolted to a wall, so where it lives is configuration, not
+            // a choice. Only fills a gap: an assignment made in the UI stands.
+            if ($ac->room_id === null) {
+                $ac->room_id = $this->configuredRoomId($device['mac']);
+            }
+
             // last_seen_at changes on every scan, so it must not by itself
             // trigger a broadcast or the Pi loops on the result of its own sync.
-            if ($ac->isDirty(['ip', 'port', 'online', 'name'])) {
+            if ($ac->isDirty(['ip', 'port', 'online', 'name', 'room_id'])) {
                 $changed = true;
             }
 
@@ -80,6 +86,25 @@ class AirConditionerController extends Controller
             'synced' => count($seenIds),
             'offline' => $wentOffline,
         ]);
+    }
+
+    /**
+     * Room a unit belongs to according to config/climate.php, or null if the
+     * MAC is not one we know about.
+     *
+     * Gree units report their MAC unseparated and lower-cased, but a hand-typed
+     * config entry may well have colons in it, so both sides are normalised.
+     */
+    private function configuredRoomId(string $mac): ?int
+    {
+        $normalise = fn (string $value) => strtolower(preg_replace('/[^0-9a-fA-F]/', '', $value));
+
+        $map = collect(config('climate.ac_rooms', []))
+            ->mapWithKeys(fn ($slug, $key) => [$normalise((string) $key) => $slug]);
+
+        $slug = $map->get($normalise($mac));
+
+        return $slug ? Room::where('slug', $slug)->value('id') : null;
     }
 
     public function update(Request $request, $id)

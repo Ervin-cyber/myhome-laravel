@@ -44,6 +44,7 @@ class LiveReadingCreated implements ShouldBroadcastNow
             // Pi diffs to decide whether to re-issue commands.
             'air_conditioners' => AirConditioner::orderBy('id')->get([
                 'id',
+                'room_id',
                 'name',
                 'ip',
                 'mac',
