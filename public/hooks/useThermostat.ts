@@ -117,7 +117,13 @@ export function useThermostat() {
      */
     const requestLiveData = useCallback(async () => {
         try {
-            await fetchClient('/proxy/api/rooms/live', { method: 'POST' });
+            await fetchClient('/proxy/api/rooms/live', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // Nothing to say, but say it in JSON: a bodyless POST is the
+                // edge case the proxy used to choke on.
+                body: '{}',
+            });
         } catch (error) {
             // Live readings are a nicety; the dashboard works without them.
             console.error('Could not open a live window', error);
