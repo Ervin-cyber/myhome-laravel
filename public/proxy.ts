@@ -54,16 +54,23 @@ export async function proxy(req: NextRequest) {
   if (isApiRoute(path)) {
     const realPath = path.replace('/proxy', '');
     if (req?.method == 'POST') {
-      const body = await req.json();
+      // Read the body rather than parse it. Not every POST carries one —
+      // /rooms/live is a bare signal — and req.json() throws on an empty body,
+      // which lands here as a 500 rather than as the request going through.
+      const body = await req.text();
+
       const result = await fetch(`${process.env.API_BASE_URL}${realPath}`, {
         credentials: 'include',
         method: 'POST',
         headers: {
           'Referer': `${process.env.API_BASE_URL}`,
           Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/json'
+          Accept: 'application/json',
+          // Without this fetch labels a string body text/plain, and Laravel
+          // will not read a JSON payload it has not been told is one.
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
-        body: JSON.stringify(body)
+        ...(body ? { body } : {}),
       });
       return result;
     } else {
