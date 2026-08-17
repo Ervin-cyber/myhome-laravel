@@ -14,6 +14,13 @@ import greeclimate.device as gree_device
 import asyncio
 from dotenv import load_dotenv
 
+try:
+    import kasa
+except ImportError:
+    # Energy metering is an extra, not a dependency of climate control. A Pi
+    # without python-kasa installed still heats and cools the house.
+    kasa = None
+
 def _enum_member(enum_name, *candidates):
     """
     Look a member up by any of several spellings.
@@ -132,6 +139,13 @@ AC_RESEND_INTERVAL = 600  # re-assert state at least every 10 min, in case of re
 # them. The window is carried in the control document and expires on its own.
 LIVE_POLL_INTERVAL = 15
 
+# Tapo metering plugs, keyed by MAC for the same reason the ACs are. Unlike the
+# units these are polled even with nobody watching, because consumption is the
+# only signal that says whether a command actually reached the hardware.
+PLUG_DEVICES = {}
+PLUG_POLL_INTERVAL = 120
+last_plug_poll_at = 0
+
 # The API decides, this script only applies. If no control document arrives
 # within the deadline the hardware is failed safe, so a dead API or a dropped
 # websocket can never leave the boiler running unattended.
@@ -204,6 +218,12 @@ cooling_on = False
 
 API_ENDPOINT = os.getenv('API_ENDPOINT')
 Headers = { "Authorization" : os.getenv('API_TOKEN') }
+
+# TP-Link account credentials. Tapo's local protocol authenticates with them,
+# but the traffic stays on the LAN — nothing is sent to TP-Link, and these
+# never leave the Pi.
+TAPO_EMAIL = os.getenv('TAPO_EMAIL')
+TAPO_PASSWORD = os.getenv('TAPO_PASSWORD')
 previous_control_data = {}
 
 def send_ntfy_alert(message, tag, key=None):
@@ -262,6 +282,185 @@ def run_on_ac_loop(coro, timeout=60):
         future.cancel()
         print(f"AC loop task failed: {type(e).__name__} - {e}")
         return None
+
+def post_plug_sync(plugs):
+    """Report the plugs and what they are currently drawing."""
+    if not plugs:
+        return
+
+    try:
+        requests.post(f"{API_ENDPOINT}/smart-plugs/sync",
+                      json={'plugs': plugs},
+                      headers=Headers,
+                      timeout=5)
+    except Exception as e:
+        print(f"Failed to sync plugs to the database: {e}")
+
+async def init_plugs():
+    """
+    Find the Tapo plugs on the LAN and key them by MAC.
+
+    Discovery rather than a fixed address, for the same reason the ACs use it:
+    a DHCP lease is not an identity. The credentials are a TP-Link account, but
+    the handshake and everything after it stay on the LAN.
+    """
+    global PLUG_DEVICES
+
+    if not (TAPO_EMAIL and TAPO_PASSWORD):
+        return
+
+    try:
+        found = await kasa.Discover.discover(
+            credentials=kasa.Credentials(TAPO_EMAIL, TAPO_PASSWORD),
+            discovery_timeout=5,
+        )
+    except Exception as exc:
+        print(f"Plug discovery failed: {type(exc).__name__} - {exc}")
+        return
+
+    discovered = {}
+
+    for device in found.values():
+        try:
+            await device.update()
+        except Exception as exc:
+            print(f"Plug update failed: {type(exc).__name__} - {exc}")
+            continue
+
+        mac = (getattr(device, 'mac', '') or '').lower()
+        if not mac:
+            continue
+
+        # Only metering plugs are of interest; a plug that cannot measure has
+        # nothing to tell us the control document does not already say. Said
+        # out loud, because a P110 that reads as unmetered means the energy
+        # interface moved again, not that the socket is a dumb one.
+        if read_plug_watts(device) is None:
+            print(f"[{mac}] {getattr(device, 'alias', '?')} reports no energy data; ignoring.")
+            continue
+
+        discovered[mac] = device
+
+    PLUG_DEVICES = discovered
+    print(f"Found {len(PLUG_DEVICES)} metering plug(s).")
+
+    if not discovered:
+        send_ntfy_alert("No metering plugs found on the network", "warning", key="no_plugs")
+
+def energy_module(device):
+    """
+    The device's energy module, or None if it has no metering.
+
+    python-kasa keys modules by a str subclass, so Module.Energy and the plain
+    name both work; the constant is preferred and the string is the fallback
+    for builds that predate it.
+    """
+    modules = getattr(device, 'modules', None)
+    if not modules or not hasattr(modules, 'get'):
+        return None
+
+    key = getattr(getattr(kasa, 'Module', None), 'Energy', 'Energy')
+
+    try:
+        return modules.get(key) or modules.get('Energy')
+    except Exception:
+        return None
+
+def read_plug_watts(device):
+    """
+    Current draw in watts.
+
+    Returning None rather than 0 is the point: a read that failed must never
+    be reported as a plug that measured nothing, or a dead unit would look
+    exactly like an idle one.
+    """
+    energy = energy_module(device)
+
+    if energy is not None:
+        for attribute in ('current_consumption', 'power'):
+            value = getattr(energy, attribute, None)
+            if value is not None:
+                return float(value)
+
+    # Pre-module builds exposed the meter on the device itself.
+    for attribute in ('current_consumption', 'emeter_realtime'):
+        value = getattr(device, attribute, None)
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            if value.get('power') is not None:
+                return float(value['power'])
+            if value.get('power_mw') is not None:
+                return float(value['power_mw']) / 1000.0
+        else:
+            return float(value)
+
+    return None
+
+def read_plug_energy_today(device):
+    """Today's total in kWh, or None if this build does not report it."""
+    energy = energy_module(device)
+
+    if energy is not None:
+        for attribute in ('consumption_today', 'energy_today'):
+            value = getattr(energy, attribute, None)
+            if value is not None:
+                return float(value)
+
+    value = getattr(device, 'emeter_today', None)
+
+    return float(value) if value is not None else None
+
+def poll_plugs():
+    """Read every known plug and report it. Rediscovers if we have none."""
+    if not (TAPO_EMAIL and TAPO_PASSWORD):
+        return
+
+    async def read_all():
+        if not PLUG_DEVICES:
+            await init_plugs()
+
+        readings = []
+
+        for mac, device in list(PLUG_DEVICES.items()):
+            try:
+                await asyncio.wait_for(device.update(), timeout=5.0)
+            except Exception as exc:
+                print(f"[{mac}] plug read failed: {type(exc).__name__}")
+                # Drop the binding so the next pass rediscovers rather than
+                # holding a handle to something that has moved or gone.
+                PLUG_DEVICES.pop(mac, None)
+                continue
+
+            readings.append({
+                'mac': mac,
+                'name': getattr(device, 'alias', None) or mac,
+                'ip': getattr(device, 'host', None),
+                'watts': read_plug_watts(device),
+                'energy_today': read_plug_energy_today(device),
+            })
+
+        return readings
+
+    post_plug_sync(run_on_ac_loop(read_all()) or [])
+
+def plug_poller():
+    """
+    Read the plugs on a slow cadence, faster while a dashboard is open.
+
+    Consumption is the only feedback this system has that a command actually
+    landed — everything else reports what we *sent* — so it is worth a baseline
+    poll even when nobody is looking.
+    """
+    while True:
+        time.sleep(LIVE_POLL_INTERVAL)
+
+        live = time.time() < ((last_control or {}).get('live_until') or 0)
+        due = time.time() - last_plug_poll_at >= PLUG_POLL_INTERVAL
+
+        if live or due:
+            poll_plugs()
+            globals()['last_plug_poll_at'] = time.time()
 
 def post_ac_sync(devices):
     """Report discovered units (and their indoor readings) to the API."""
@@ -745,6 +944,11 @@ if __name__ == '__main__':
         report_unmapped_settings()
         threading.Thread(target=control_watchdog, name="control-watchdog", daemon=True).start()
         threading.Thread(target=live_poller, name="live-poller", daemon=True).start()
+
+        if kasa and TAPO_EMAIL and TAPO_PASSWORD:
+            threading.Thread(target=plug_poller, name="plug-poller", daemon=True).start()
+        elif TAPO_EMAIL and not kasa:
+            print("WARNING: TAPO_EMAIL is set but python-kasa is not installed; no metering.")
 
         # Act on the current state immediately rather than waiting for the
         # next sensor reading to produce a broadcast.

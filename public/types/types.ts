@@ -103,6 +103,29 @@ export interface AirConditioner {
     calibrated_temp: number | null;
 }
 
+/**
+ * What the draw says is running downstream of a plug. This is the only signal
+ * in the system that reports what the hardware is actually doing rather than
+ * what we last told it to do.
+ */
+export type PlugActivity = 'idle' | 'fan' | 'compressor' | 'unknown';
+
+export interface SmartPlug {
+    id: number;
+    mac: string;
+    name: string;
+    ip: string | null;
+    /** Null means the plug measures more than one room, so its total is house-wide. */
+    room_id: number | null;
+    online: boolean;
+    last_seen_at: string | null;
+    watts: number | null;
+    watts_at: string | null;
+    /** kWh so far today, as counted by the plug itself. */
+    energy_today: number | null;
+    activity: PlugActivity;
+}
+
 export interface ThermostatData {
     currentTemp: number;
     targetTemp: number;
@@ -114,6 +137,7 @@ export interface ThermostatData {
     lastUpdated: Date | null;
     airConditioners: AirConditioner[];
     rooms: Room[];
+    smartPlugs: SmartPlug[];
 }
 
 export interface Stat {
@@ -140,6 +164,7 @@ export interface SystemStateResponse {
     timestamp?: string;
     air_conditioners?: AirConditioner[];
     rooms?: Room[];
+    smart_plugs?: SmartPlug[];
 }
 
 export interface FetchLatestDataResponse {
@@ -159,5 +184,6 @@ export interface LiveReadingEvent {
         hvac_until: number;
         air_conditioners: AirConditioner[];
         rooms: Room[];
+        smart_plugs: SmartPlug[];
     }
 }

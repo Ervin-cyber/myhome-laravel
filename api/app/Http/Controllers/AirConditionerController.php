@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\PlacesByMac;
 use App\Models\AirConditioner;
 use App\Models\Room;
 use Illuminate\Http\Request;
@@ -10,6 +11,8 @@ use App\Events\LiveReadingCreated;
 
 class AirConditionerController extends Controller
 {
+    use PlacesByMac;
+
     public function index()
     {
         return response()->json(AirConditioner::orderBy('id')->get());
@@ -56,7 +59,7 @@ class AirConditionerController extends Controller
             // A unit is bolted to a wall, so where it lives is configuration, not
             // a choice. Only fills a gap: an assignment made in the UI stands.
             if ($ac->room_id === null) {
-                $ac->room_id = $this->configuredRoomId($device['mac']);
+                $ac->room_id = $this->configuredRoomId($device['mac'], 'climate.ac_rooms');
             }
 
             // last_seen_at changes on every scan, so it must not by itself
@@ -87,25 +90,6 @@ class AirConditionerController extends Controller
             'synced' => count($seenIds),
             'offline' => $wentOffline,
         ]);
-    }
-
-    /**
-     * Room a unit belongs to according to config/climate.php, or null if the
-     * MAC is not one we know about.
-     *
-     * Gree units report their MAC unseparated and lower-cased, but a hand-typed
-     * config entry may well have colons in it, so both sides are normalised.
-     */
-    private function configuredRoomId(string $mac): ?int
-    {
-        $normalise = fn (string $value) => strtolower(preg_replace('/[^0-9a-fA-F]/', '', $value));
-
-        $map = collect(config('climate.ac_rooms', []))
-            ->mapWithKeys(fn ($slug, $key) => [$normalise((string) $key) => $slug]);
-
-        $slug = $map->get($normalise($mac));
-
-        return $slug ? Room::where('slug', $slug)->value('id') : null;
     }
 
     public function update(Request $request, $id)

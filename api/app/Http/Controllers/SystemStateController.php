@@ -6,6 +6,7 @@ use App\Http\Requests\SystemStateRequest;
 use App\Models\AirConditioner;
 use App\Models\HeatingLog;
 use App\Models\Room;
+use App\Models\SmartPlug;
 use App\Models\SystemState;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -22,6 +23,7 @@ class SystemStateController extends Controller
             ...($state?->toArray() ?? []),
             'rooms' => Room::with('airConditioners')->orderBy('sort_order')->get(),
             'air_conditioners' => AirConditioner::orderBy('id')->get(),
+            'smart_plugs' => SmartPlug::orderBy('id')->get(),
         ], 200);
     }
 

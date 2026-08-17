@@ -7,6 +7,7 @@ use App\Http\Controllers\SystemStateController;
 use App\Http\Controllers\TemperatureController;
 use App\Http\Controllers\AirConditionerController;
 use App\Http\Controllers\RoomController;
+use App\Http\Controllers\SmartPlugController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login'])
@@ -31,6 +32,11 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
     Route::get('/air-conditioners', [AirConditionerController::class, 'index']);
     Route::post('/air-conditioners/sync', [AirConditionerController::class, 'sync']);
     Route::post('/air-conditioners/{id}', [AirConditionerController::class, 'update'])
+        ->whereNumber('id');
+
+    Route::get('/smart-plugs', [SmartPlugController::class, 'index']);
+    Route::post('/smart-plugs/sync', [SmartPlugController::class, 'sync']);
+    Route::post('/smart-plugs/{id}', [SmartPlugController::class, 'update'])
         ->whereNumber('id');
 
     Route::get('/stats', [StatsController::class, 'index']);

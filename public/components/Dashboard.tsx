@@ -14,6 +14,7 @@ import LoadingSpinner from './LoadingSpinner';
 import ModeToggle from './ModeToggle';
 import ACUnitIcon from './ACUnitIcon';
 import RoomCard from './RoomCard';
+import PowerCard from './PowerCard';
 
 export default function Dashboard(): JSX.Element {
     const {
@@ -28,7 +29,7 @@ export default function Dashboard(): JSX.Element {
         updateRoomState,
     } = useThermostat();
 
-    const { heating, cooling, mode, enabled, lastUpdated, airConditioners, rooms } = data;
+    const { heating, cooling, mode, enabled, lastUpdated, airConditioners, rooms, smartPlugs } = data;
 
     const colors = getThemeColors(mode) || { gradient: 'from-gray-700 to-gray-800', shadowColor: 'shadow-gray-900', text: 'text-gray-400' };
     const isActive = (mode === 'heating' && heating) || (mode === 'cooling' && cooling);
@@ -148,6 +149,8 @@ export default function Dashboard(): JSX.Element {
                             </ul>
                         </div>
                     )}
+
+                    <PowerCard plugs={smartPlugs} rooms={rooms} airConditioners={airConditioners} />
 
                     <div className="mt-3 rounded-2xl border border-gray-700/50 bg-gray-800/50 p-4 backdrop-blur">
                         <span className="text-sm font-medium uppercase tracking-wide text-gray-400">Last 24 hours</span>
