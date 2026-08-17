@@ -224,6 +224,11 @@ Headers = { "Authorization" : os.getenv('API_TOKEN') }
 # never leave the Pi.
 TAPO_EMAIL = os.getenv('TAPO_EMAIL')
 TAPO_PASSWORD = os.getenv('TAPO_PASSWORD')
+
+# Optional, comma separated. Broadcast discovery is the tidier route, but it
+# does not survive client isolation on the access point or a plug on another
+# subnet — in which case asking the address directly is the only way in.
+TAPO_HOSTS = [h.strip() for h in (os.getenv('TAPO_HOSTS') or '').split(',') if h.strip()]
 previous_control_data = {}
 
 def send_ntfy_alert(message, tag, key=None):
@@ -296,39 +301,60 @@ def post_plug_sync(plugs):
     except Exception as e:
         print(f"Failed to sync plugs to the database: {e}")
 
+async def find_plug_candidates(credentials):
+    """
+    Every Tapo device we can reach, by whichever route works.
+
+    Broadcast discovery is the tidier route and keys nothing to an address, but
+    it dies quietly against client isolation on the access point or a plug on
+    another subnet. TAPO_HOSTS is the way through that.
+    """
+    candidates = {}
+
+    for host in TAPO_HOSTS:
+        try:
+            candidates[host] = await kasa.Discover.discover_single(host, credentials=credentials)
+        except Exception as exc:
+            print(f"[{host}] direct connection failed: {type(exc).__name__} - {exc}")
+
+    if candidates:
+        return candidates
+
+    try:
+        return await kasa.Discover.discover(credentials=credentials, discovery_timeout=5)
+    except Exception as exc:
+        print(f"Plug discovery failed: {type(exc).__name__} - {exc}")
+        return {}
+
 async def init_plugs():
     """
-    Find the Tapo plugs on the LAN and key them by MAC.
+    Find the Tapo plugs and key them by MAC.
 
-    Discovery rather than a fixed address, for the same reason the ACs use it:
-    a DHCP lease is not an identity. The credentials are a TP-Link account, but
-    the handshake and everything after it stay on the LAN.
+    MAC rather than address, for the same reason the ACs use it: a DHCP lease is
+    not an identity. The credentials are a TP-Link account, but the handshake
+    and everything after it stay on the LAN.
     """
     global PLUG_DEVICES
 
     if not (TAPO_EMAIL and TAPO_PASSWORD):
         return
 
-    try:
-        found = await kasa.Discover.discover(
-            credentials=kasa.Credentials(TAPO_EMAIL, TAPO_PASSWORD),
-            discovery_timeout=5,
-        )
-    except Exception as exc:
-        print(f"Plug discovery failed: {type(exc).__name__} - {exc}")
-        return
+    found = await find_plug_candidates(kasa.Credentials(TAPO_EMAIL, TAPO_PASSWORD))
 
     discovered = {}
+    rejected = []
 
-    for device in found.values():
+    for address, device in found.items():
         try:
             await device.update()
         except Exception as exc:
-            print(f"Plug update failed: {type(exc).__name__} - {exc}")
+            rejected.append(f'{address} ({type(exc).__name__})')
+            print(f"[{address}] plug login failed: {type(exc).__name__} - {exc}")
             continue
 
         mac = (getattr(device, 'mac', '') or '').lower()
         if not mac:
+            rejected.append(f'{address} (no MAC)')
             continue
 
         # Only metering plugs are of interest; a plug that cannot measure has
@@ -336,16 +362,26 @@ async def init_plugs():
         # out loud, because a P110 that reads as unmetered means the energy
         # interface moved again, not that the socket is a dumb one.
         if read_plug_watts(device) is None:
+            rejected.append(f'{getattr(device, "alias", address)} (no energy data)')
             print(f"[{mac}] {getattr(device, 'alias', '?')} reports no energy data; ignoring.")
             continue
 
         discovered[mac] = device
 
     PLUG_DEVICES = discovered
-    print(f"Found {len(PLUG_DEVICES)} metering plug(s).")
+    print(f"Found {len(PLUG_DEVICES)} metering plug(s) out of {len(found)} device(s).")
 
-    if not discovered:
-        send_ntfy_alert("No metering plugs found on the network", "warning", key="no_plugs")
+    if discovered:
+        return
+
+    # Say which of the two it was: nothing answered at all, or something
+    # answered and could not be used. They have entirely different fixes.
+    if not found:
+        detail = 'nothing answered discovery — check TAPO_HOSTS, subnet or AP client isolation'
+    else:
+        detail = 'found but unusable: ' + ', '.join(rejected)
+
+    send_ntfy_alert(f"No metering plugs: {detail}", "warning", key="no_plugs")
 
 def energy_module(device):
     """
