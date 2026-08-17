@@ -7,8 +7,15 @@ const protectedRoutes = ['/', '/dashboard'];
 // Routes that should be accessible without authentication
 const publicRoutes = ['/login'];
 
-// Api routes
+// Api routes matched exactly
 const apiRoutes = ['/api/login', '/proxy/api/me', '/proxy/api/logout', '/proxy/api/temperature-latest', '/proxy/api/state', '/proxy/api/stats']
+
+// Api routes that carry sub-paths, e.g. /proxy/api/air-conditioners/3
+const apiRoutePrefixes = ['/proxy/api/air-conditioners', '/proxy/api/rooms']
+
+const isApiRoute = (path: string) =>
+  apiRoutes.includes(path) ||
+  apiRoutePrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 
 export async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
@@ -44,8 +51,8 @@ export async function proxy(req: NextRequest) {
     })
   }
 
-  if (apiRoutes.some((path) => req.nextUrl.pathname == path)) {
-    const realPath = req.nextUrl.pathname.replace('/proxy', '');
+  if (isApiRoute(path)) {
+    const realPath = path.replace('/proxy', '');
     if (req?.method == 'POST') {
       const body = await req.json();
       const result = await fetch(`${process.env.API_BASE_URL}${realPath}`, {

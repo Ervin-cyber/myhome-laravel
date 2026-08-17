@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\SystemStateRequest;
+use App\Models\AirConditioner;
 use App\Models\HeatingLog;
+use App\Models\Room;
 use App\Models\SystemState;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -12,7 +14,15 @@ class SystemStateController extends Controller
 {
     public function show()
     {
-        return response()->json(SystemState::first(), 200);
+        $state = SystemState::first();
+
+        // Rooms and units ship with the initial load, otherwise the dashboard
+        // renders empty until the first broadcast happens to arrive.
+        return response()->json([
+            ...($state?->toArray() ?? []),
+            'rooms' => Room::with('airConditioners')->orderBy('sort_order')->get(),
+            'air_conditioners' => AirConditioner::orderBy('id')->get(),
+        ], 200);
     }
 
     public function update(SystemStateRequest $request)
@@ -96,6 +106,35 @@ class SystemStateController extends Controller
 
         $state->save();
 
+        $this->mirrorToBoilerRoom($data, $state);
+
         return response()->json(['message' => "Success"], 200);
+    }
+
+    /**
+     * Transitional: the dashboard's main thermostat still writes the house-level
+     * setpoint here, while rooms are the authoritative owner of target and boost.
+     * Mirror it onto the room driving the boiler so the two cannot diverge.
+     * Remove once the dashboard writes per-room targets directly.
+     */
+    private function mirrorToBoilerRoom(array $data, SystemState $state): void
+    {
+        $room = Room::where('drives_boiler', true)->first();
+
+        if (! $room) {
+            return;
+        }
+
+        if (isset($data['target_temp'])) {
+            $room->target_temp = $data['target_temp'];
+        }
+
+        if (array_key_exists('hvac_until', $data)) {
+            $room->hvac_until = $state->hvac_until ?? 0;
+        }
+
+        if ($room->isDirty()) {
+            $room->save();
+        }
     }
 }

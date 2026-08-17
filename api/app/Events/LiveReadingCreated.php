@@ -4,6 +4,9 @@ namespace App\Events;
 
 use App\Models\SystemState;
 use App\Models\TemperatureReading;
+use App\Models\AirConditioner;
+use App\Models\Room;
+use App\Services\ClimateService;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -20,16 +23,41 @@ class LiveReadingCreated implements ShouldBroadcastNow
     {
         $latestTemp = TemperatureReading::getLatestTemperature();
         $systemState = SystemState::first();
-        
+
+        // Evaluate before reading rooms back, so the payload carries the state
+        // the controller just decided rather than the previous one.
+        $control = app(ClimateService::class)->evaluate();
+
         $this->reading = [
-            'temperature' => $latestTemp->value,
-            'last_updated' => $latestTemp->timestamp,
-            'enabled' => boolval($systemState->enabled),
-            'heating_on' => boolval($systemState->heating_on),
-            'cooling_on' => boolval($systemState->cooling_on),
-            'mode' => $systemState->mode,
-            'set_temp' => $systemState->target_temp,
-            'hvac_until' => $systemState->hvac_until,
+            'control' => $control,
+            'temperature' => $latestTemp?->value,
+            'last_updated' => $latestTemp?->timestamp,
+            'enabled' => boolval($systemState?->enabled),
+            'heating_on' => boolval($systemState?->heating_on),
+            'cooling_on' => boolval($systemState?->cooling_on),
+            'mode' => $systemState?->mode,
+            'set_temp' => $systemState?->target_temp,
+            'hvac_until' => $systemState?->hvac_until,
+            'rooms' => Room::with('airConditioners')->orderBy('sort_order')->get(),
+            // Explicit column list: last_seen_at and the model timestamps change on
+            // every discovery scan and would otherwise churn this payload, which the
+            // Pi diffs to decide whether to re-issue commands.
+            'air_conditioners' => AirConditioner::orderBy('id')->get([
+                'id',
+                'name',
+                'ip',
+                'mac',
+                'port',
+                'target_temp',
+                'enabled',
+                'mode',
+                'heating_on',
+                'cooling_on',
+                'online',
+                'reported_temp',
+                'reported_at',
+                'calibration_offset',
+            ]),
         ];
     }
 

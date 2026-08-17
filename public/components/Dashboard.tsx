@@ -16,9 +16,9 @@ import ACUnitIcon from './ACUnitIcon';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 export default function Dashboard(): JSX.Element {
-    const { data, stats, isSaving, saveState, changeMode, togglePower } = useThermostat();
+    const { data, stats, isSaving, pendingAcIds, saveState, changeMode, togglePower, updateAcState } = useThermostat();
 
-    const { currentTemp, targetTemp, heating, cooling, mode, enabled, hvacUntil, lastUpdated } = data;
+    const { currentTemp, targetTemp, heating, cooling, mode, enabled, hvacUntil, lastUpdated, airConditioners, rooms } = data;
     const colors = getThemeColors(mode) || { gradient: 'from-gray-700 to-gray-800', shadowColor: 'shadow-gray-900', text: 'text-gray-400' };
     const isActive = (mode === 'heating' && heating) || (mode === 'cooling' && cooling);
     const isBoosting = hvacUntil > 0;
@@ -143,6 +143,104 @@ export default function Dashboard(): JSX.Element {
                             </div>
                         </div>
                     </div>
+
+                    {/* AC Units Section */}
+                    {airConditioners && airConditioners.length > 0 && (
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {airConditioners.map((ac) => {
+                                const isPending = pendingAcIds.includes(ac.id);
+                                const isRunning = mode === 'cooling' && ac.enabled && ac.online && (enabled || isBoosting);
+                                const acTemp = ac.reported_temp !== null
+                                    ? Number(ac.reported_temp) + Number(ac.calibration_offset ?? 0)
+                                    : null;
+
+                                return (
+                                    <div key={ac.id} className={`bg-gray-800/50 backdrop-blur rounded-2xl p-4 border flex flex-col gap-4 transition-opacity ${ac.online ? 'border-gray-700/50' : 'border-gray-700/50 opacity-60'}`}>
+                                        <div className="flex justify-between items-center gap-3">
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                <div className="w-10 h-10 shrink-0 rounded-lg bg-gradient-to-br from-blue-500/20 to-blue-600/20 flex items-center justify-center shadow-inner">
+                                                    <ACUnitIcon size={24} isOn={isRunning} />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <h3 className="text-white font-medium truncate">{ac.name}</h3>
+                                                    {/* Secondary, low-priority: the unit's own indoor sensor */}
+                                                    {acTemp !== null ? (
+                                                        <p className="text-xs text-gray-500">
+                                                            Unit sensor <span className="font-mono text-gray-400">{acTemp.toFixed(1)}°C</span>
+                                                        </p>
+                                                    ) : (
+                                                        <p className="text-xs text-gray-600 font-mono truncate">{ac.ip}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={() => updateAcState(ac.id, { enabled: !ac.enabled })}
+                                                disabled={isPending || !ac.online}
+                                                aria-label={ac.enabled ? `Disable ${ac.name}` : `Enable ${ac.name}`}
+                                                className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-all active:scale-95 disabled:opacity-50 ${ac.enabled ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-500'}`}
+                                            >
+                                                <PowerSettingsNewIcon sx={{ fontSize: 20 }} />
+                                            </button>
+                                        </div>
+
+                                        {/* Room assignment. Units arrive unassigned from discovery. */}
+                                        {rooms.length > 0 && (
+                                            <label className="flex items-center justify-between gap-3 text-xs">
+                                                <span className={ac.room_id === null ? 'text-amber-400' : 'text-gray-500'}>
+                                                    {ac.room_id === null ? 'Unassigned' : 'Room'}
+                                                </span>
+                                                <select
+                                                    value={ac.room_id ?? ''}
+                                                    onChange={(e) => updateAcState(ac.id, {
+                                                        room_id: e.target.value === '' ? null : Number(e.target.value),
+                                                    })}
+                                                    disabled={isPending}
+                                                    aria-label={`Room for ${ac.name}`}
+                                                    className={`min-h-[2.25rem] rounded-lg bg-gray-700/70 px-2 py-1 text-sm text-white border disabled:opacity-50 ${ac.room_id === null ? 'border-amber-500/50' : 'border-gray-600/50'}`}
+                                                >
+                                                    <option value="">— pick a room —</option>
+                                                    {rooms.map((room) => (
+                                                        <option key={room.id} value={room.id}>{room.name}</option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                        )}
+
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => updateAcState(ac.id, { target_temp: Math.max(16, ac.target_temp - 1) })}
+                                                    disabled={isPending || !ac.enabled || !ac.online || ac.target_temp <= 16}
+                                                    aria-label={`Lower ${ac.name} target`}
+                                                    className="w-11 h-11 rounded-lg bg-gray-700 text-white text-xl flex items-center justify-center transition-all active:scale-95 hover:bg-gray-600 disabled:opacity-50"
+                                                >
+                                                    −
+                                                </button>
+                                                <div className="flex flex-col items-center min-w-[3rem]">
+                                                    <span className={`text-xl font-mono ${ac.enabled ? 'text-white' : 'text-gray-600'}`}>
+                                                        {ac.target_temp}
+                                                    </span>
+                                                    <span className="text-[10px] text-gray-500 uppercase">Target</span>
+                                                </div>
+                                                <button
+                                                    onClick={() => updateAcState(ac.id, { target_temp: Math.min(30, ac.target_temp + 1) })}
+                                                    disabled={isPending || !ac.enabled || !ac.online || ac.target_temp >= 30}
+                                                    aria-label={`Raise ${ac.name} target`}
+                                                    className="w-11 h-11 rounded-lg bg-gray-700 text-white text-xl flex items-center justify-center transition-all active:scale-95 hover:bg-gray-600 disabled:opacity-50"
+                                                >
+                                                    +
+                                                </button>
+                                            </div>
+
+                                            <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${!ac.online ? 'bg-gray-700 text-gray-500' : isRunning ? 'bg-blue-500/20 text-blue-400 animate-pulse' : 'bg-gray-700 text-gray-500'}`}>
+                                                {!ac.online ? 'Offline' : isRunning ? 'Cooling' : 'Standby'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
 
                     {/* Quick Actions */}
                     {quickTemps.length > 0 && (
