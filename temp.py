@@ -326,6 +326,55 @@ async def find_plug_candidates(credentials):
         print(f"Plug discovery failed: {type(exc).__name__} - {exc}")
         return {}
 
+def looks_like_a_plug(device):
+    """
+    Whether this is worth trying to log in to.
+
+    A TP-Link account sees every Tapo device on the network — cameras, hubs,
+    bulbs — and discovery announces the type before anyone authenticates. A
+    camera will never have an energy module, and its HTTPS transport fails a
+    TLS handshake on the way to finding that out, so it is skipped rather than
+    retried and reported every time.
+    """
+    device_type = getattr(device, 'device_type', None)
+    if device_type is None:
+        return True
+
+    name = str(getattr(device_type, 'value', device_type)).lower()
+
+    return any(kind in name for kind in ('plug', 'strip', 'switch', 'unknown'))
+
+async def retry_every_protocol(host, credentials):
+    """
+    Let python-kasa try each protocol against an address that refused us.
+
+    Discovery picks a transport from the device's announcement, and that choice
+    can be wrong: a plug answering on the HTTPS transport fails a TLS handshake
+    that a KLAP connection would have sailed through. Returns a connected
+    device, or None if nothing worked.
+    """
+    attempt = getattr(kasa.Discover, 'try_connect_all', None)
+    if attempt is None:
+        return None
+
+    try:
+        device = await attempt(host, credentials=credentials)
+    except Exception as exc:
+        print(f"[{host}] no protocol worked: {type(exc).__name__} - {exc}")
+        return None
+
+    if device is None:
+        return None
+
+    try:
+        await device.update()
+    except Exception as exc:
+        print(f"[{host}] connected but could not read: {type(exc).__name__} - {exc}")
+        return None
+
+    print(f"[{host}] reached on the second attempt as {type(device).__name__}")
+    return device
+
 async def init_plugs():
     """
     Find the Tapo plugs and key them by MAC.
@@ -339,18 +388,29 @@ async def init_plugs():
     if not (TAPO_EMAIL and TAPO_PASSWORD):
         return
 
-    found = await find_plug_candidates(kasa.Credentials(TAPO_EMAIL, TAPO_PASSWORD))
+    credentials = kasa.Credentials(TAPO_EMAIL, TAPO_PASSWORD)
+    found = await find_plug_candidates(credentials)
 
     discovered = {}
     rejected = []
+    ignored = []
 
     for address, device in found.items():
+        if not looks_like_a_plug(device):
+            label = f'{getattr(device, "model", "?")} ({getattr(device, "device_type", "?")})'
+            print(f"[{address}] {label} is not a plug; skipping.")
+            ignored.append(label)
+            continue
+
         try:
             await device.update()
         except Exception as exc:
-            rejected.append(f'{address} ({type(exc).__name__})')
             print(f"[{address}] plug login failed: {type(exc).__name__} - {exc}")
-            continue
+
+            device = await retry_every_protocol(address, credentials)
+            if device is None:
+                rejected.append(f'{address} ({type(exc).__name__})')
+                continue
 
         mac = (getattr(device, 'mac', '') or '').lower()
         if not mac:
@@ -374,12 +434,17 @@ async def init_plugs():
     if discovered:
         return
 
-    # Say which of the two it was: nothing answered at all, or something
-    # answered and could not be used. They have entirely different fixes.
+    # Each of these has a different fix, so the alert has to distinguish them
+    # rather than just saying nothing was found.
     if not found:
         detail = 'nothing answered discovery — check TAPO_HOSTS, subnet or AP client isolation'
-    else:
+    elif rejected:
         detail = 'found but unusable: ' + ', '.join(rejected)
+    elif ignored:
+        detail = ('only non-plug devices answered (' + ', '.join(ignored)
+                  + ') — the plug did not, so set TAPO_HOSTS to its address')
+    else:
+        detail = 'no devices to try'
 
     send_ntfy_alert(f"No metering plugs: {detail}", "warning", key="no_plugs")
 

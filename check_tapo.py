@@ -100,13 +100,77 @@ async def main():
 
     for address, device in found.items():
         print(f"\n  {address}")
+
+        # Say what it is before trying to log in. Discovery knows the model and
+        # the transport without credentials, and when the login fails that is
+        # exactly what tells you whether it is even the right device.
+        config = getattr(device, 'config', None)
+        connection = getattr(config, 'connection_type', None)
+        print(f"    class     : {type(device).__name__}")
+        print(f"    model     : {getattr(device, 'model', None)!r}")
+        print(f"    type      : {getattr(device, 'device_type', None)!r}")
+        if connection is not None:
+            print(f"    encryption: {getattr(connection, 'encryption_type', None)!r}"
+                  f"  https={getattr(connection, 'https', None)!r}")
+        print(f"    port      : {getattr(config, 'port_override', None) or 'default'}")
+
         try:
             await device.update()
         except Exception as exc:
             print(f"    update() FAILED: {type(exc).__name__}: {exc}")
-            print("    Discovery found it but could not log in — check the account details.")
+            await close(device)
+            await try_every_transport(address, credentials)
             continue
+
         describe(device)
+        await close(device)
+
+
+async def close(device):
+    """Shut the HTTP session down, so aiohttp stops complaining on exit."""
+    for method in ('disconnect', 'close'):
+        closer = getattr(device, method, None)
+        if closer:
+            try:
+                await closer()
+            except Exception:
+                pass
+            return
+
+
+async def try_every_transport(host, credentials):
+    """
+    Last resort: let python-kasa try each protocol against the address.
+
+    Discovery picks a transport from the device's announcement, and that choice
+    can be wrong — a plug answering on the HTTPS transport will fail a TLS
+    handshake that a KLAP connection would have sailed through.
+    """
+    import kasa
+
+    attempt = getattr(kasa.Discover, 'try_connect_all', None)
+    if attempt is None:
+        print("    (this python-kasa has no try_connect_all)")
+        return
+
+    print("    retrying with every supported protocol...")
+    try:
+        device = await attempt(host, credentials=credentials)
+    except Exception as exc:
+        print(f"    all protocols failed: {type(exc).__name__}: {exc}")
+        return
+
+    if device is None:
+        print("    no protocol worked against this address.")
+        return
+
+    print(f"    WORKED as {type(device).__name__} / {getattr(device, 'model', '?')}")
+    try:
+        await device.update()
+        describe(device)
+    except Exception as exc:
+        print(f"    but update() still failed: {type(exc).__name__}: {exc}")
+    await close(device)
 
 
 if __name__ == '__main__':
