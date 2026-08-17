@@ -70,6 +70,34 @@ MODES = {
     'auto': _enum_member('Mode', 'Auto'),
 }
 
+def report_unmapped_settings():
+    """
+    Name every setting this greeclimate build has no member for.
+
+    An unresolved name is applied as "leave that setting alone", which is the
+    right thing to do to a compressor but is otherwise invisible: the dashboard
+    would offer a control that quietly does nothing. Saying so once at startup
+    turns that into something findable in the logs.
+    """
+    unmapped = [
+        f'{group}.{key}'
+        for group, mapping in (
+            ('mode', MODES),
+            ('fan_speed', FAN_SPEEDS),
+            ('swing_v', VERTICAL_SWING),
+            ('swing_h', HORIZONTAL_SWING),
+        )
+        for key, member in mapping.items()
+        if member is None
+    ]
+
+    if not unmapped:
+        return
+
+    message = 'greeclimate has no member for: ' + ', '.join(unmapped)
+    print(f"WARNING: {message}. Those controls will do nothing.")
+    send_ntfy_alert(message, "warning", key="unmapped_settings")
+
 # Global variable to store found and paired AC units
 GREE_DEVICES = {}
 gree_lock = None # Initialized on the AC event loop
@@ -703,6 +731,7 @@ if __name__ == '__main__':
         start_ac_loop()
         run_on_ac_loop(init_gree_ac(), timeout=60)
 
+        report_unmapped_settings()
         threading.Thread(target=control_watchdog, name="control-watchdog", daemon=True).start()
         threading.Thread(target=live_poller, name="live-poller", daemon=True).start()
 
