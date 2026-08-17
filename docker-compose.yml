@@ -12,7 +12,7 @@ services:
 
   # 1. Laravel PHP-FPM Service (API)
   laravel:
-    image: ervinpap/myhome-laravel:latest
+    image: ervinpap/laravel:latest
     build:
       context: ./api
       dockerfile: Dockerfile
@@ -30,7 +30,7 @@ services:
 
   # 2. Laravel Reverb WebSocket Server
   reverb:
-    image: ervinpap/myhome-reverb:latest
+    image: ervinpap/laravel:latest
     build:
       context: ./api
       dockerfile: Dockerfile
@@ -51,7 +51,7 @@ services:
 
   # 3. Laravel Queue Worker
   worker:
-    image: ervinpap/myhome-worker:latest
+    image: ervinpap/laravel:latest
     build:
       context: ./api
       dockerfile: Dockerfile
@@ -85,7 +85,7 @@ services:
 
   # 5. Next.js Frontend
   nextjs:
-    image: ervinpap/myhome-nextjs:latest 
+    image: ervinpap/nextjs-frontend:latest
     build:
       context: ./public
       dockerfile: Dockerfile
