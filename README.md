@@ -21,6 +21,41 @@ This is a focused, real-time home climate management dashboard that provides sec
     * Total runtime of the heating system in the last 24 hours.
     * Heating system cycle counter (how many times it was turned on).
 
+## 🔌 Energy metering (Tapo P110)
+
+The Pi reads current draw and today's total from a Tapo plug via
+[python-kasa](https://github.com/python-kasa/python-kasa), using a TP-Link
+account for the local handshake. Both credentials live in the Pi's `.env` and
+never reach the API or the browser:
+
+```
+TAPO_EMAIL=you@example.com
+TAPO_PASSWORD=...
+TAPO_HOSTS=192.168.1.8    # optional; skips broadcast discovery
+```
+
+Metering is entirely optional — without `python-kasa` installed, or without
+those variables, the plug thread never starts and climate control is unaffected.
+
+Run `python3 check_tapo.py [ip]` on the Pi to diagnose; it reports each stage
+separately.
+
+### Known blocker: TPAP firmware
+
+Some P110 firmware speaks an encryption scheme python-kasa does not implement:
+
+```
+UnsupportedDeviceError: Unsupported device ... of type SMART.TAPOPLUG
+with encrypt_scheme EncryptionScheme(..., encrypt_type='TPAP', ...)
+```
+
+This is an upstream gap, not a configuration problem — no credentials, address
+or network change gets past it, and 0.10.2 is the newest release as of writing.
+The Pi records such an address and stops dialling it until the service is
+restarted, so it costs nothing but the reading. Retry after upgrading
+python-kasa; if `grep -ril tpap` in the installed package finds nothing, support
+has not landed yet.
+
 ## 🚀 Technical Architecture
 
 This project is built on a high-performance, containerized, and decoupled architecture.

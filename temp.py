@@ -146,6 +146,16 @@ PLUG_DEVICES = {}
 PLUG_POLL_INTERVAL = 120
 last_plug_poll_at = 0
 
+# Rediscovery is not free — it opens connections and, failing, waits on
+# timeouts. When there is nothing to find, back off rather than trying again
+# on every poll.
+PLUG_DISCOVERY_BACKOFF = 900
+last_plug_discovery_at = 0
+
+# Addresses whose protocol this python-kasa cannot speak, so we stop dialling
+# them. Cleared by a restart, which is what installing a newer library means.
+unsupported_plugs = {}
+
 # The API decides, this script only applies. If no control document arrives
 # within the deadline the hardware is failed safe, so a dead API or a dropped
 # websocket can never leave the boiler running unattended.
@@ -310,21 +320,41 @@ async def find_plug_candidates(credentials):
     another subnet. TAPO_HOSTS is the way through that.
     """
     candidates = {}
+    problems = []
 
     for host in TAPO_HOSTS:
+        if host in unsupported_plugs:
+            problems.append(f'{host}: {unsupported_plugs[host]}')
+            continue
+
         try:
             candidates[host] = await kasa.Discover.discover_single(host, credentials=credentials)
         except Exception as exc:
+            # Worth repeating verbatim: this is where a device says it speaks a
+            # protocol this python-kasa does not, which reads nothing like a
+            # network problem and has an entirely different fix.
+            problems.append(f'{host}: {type(exc).__name__} {exc}')
             print(f"[{host}] direct connection failed: {type(exc).__name__} - {exc}")
 
+            # A device whose protocol this library cannot speak will refuse us
+            # identically forever. Remember it, so we stop opening connections
+            # to it every couple of minutes for the life of the process. A
+            # restart — which is what upgrading python-kasa entails — retries.
+            if type(exc).__name__ == 'UnsupportedDeviceError':
+                unsupported_plugs[host] = f'{type(exc).__name__}: {exc}'
+                print(f"[{host}] giving up on this address until the service restarts.")
+
     if candidates:
-        return candidates
+        return candidates, problems
 
     try:
-        return await kasa.Discover.discover(credentials=credentials, discovery_timeout=5)
+        found = await kasa.Discover.discover(credentials=credentials, discovery_timeout=5)
     except Exception as exc:
         print(f"Plug discovery failed: {type(exc).__name__} - {exc}")
-        return {}
+        problems.append(f'broadcast: {type(exc).__name__} {exc}')
+        found = {}
+
+    return found, problems
 
 def looks_like_a_plug(device):
     """
@@ -389,7 +419,7 @@ async def init_plugs():
         return
 
     credentials = kasa.Credentials(TAPO_EMAIL, TAPO_PASSWORD)
-    found = await find_plug_candidates(credentials)
+    found, problems = await find_plug_candidates(credentials)
 
     discovered = {}
     rejected = []
@@ -436,7 +466,11 @@ async def init_plugs():
 
     # Each of these has a different fix, so the alert has to distinguish them
     # rather than just saying nothing was found.
-    if not found:
+    if problems:
+        # An address we were told to use refused us. That is never a network
+        # problem worth chasing — it is the device telling us something.
+        detail = '; '.join(problems)
+    elif not found:
         detail = 'nothing answered discovery — check TAPO_HOSTS, subnet or AP client isolation'
     elif rejected:
         detail = 'found but unusable: ' + ', '.join(rejected)
@@ -518,7 +552,10 @@ def poll_plugs():
         return
 
     async def read_all():
-        if not PLUG_DEVICES:
+        global last_plug_discovery_at
+
+        if not PLUG_DEVICES and time.time() - last_plug_discovery_at >= PLUG_DISCOVERY_BACKOFF:
+            last_plug_discovery_at = time.time()
             await init_plugs()
 
         readings = []
