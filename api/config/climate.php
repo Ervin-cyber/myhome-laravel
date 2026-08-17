@@ -25,4 +25,22 @@ return [
         '580d0d3b00bd' => 'living',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Smart plug placement
+    |--------------------------------------------------------------------------
+    |
+    | Which room each metering plug measures, keyed by MAC, in the same form as
+    | ac_rooms above.
+    |
+    | Leave a plug out to keep it house-wide. A plug that feeds more than one
+    | room has to stay house-wide: its reading is a total, and attributing that
+    | total to one of the rooms it covers would simply be wrong.
+    |
+    */
+
+    'plug_rooms' => [
+        // 'aabbccddeeff' => 'bedroom',
+    ],
+
 ];

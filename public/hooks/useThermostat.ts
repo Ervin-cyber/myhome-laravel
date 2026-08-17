@@ -38,6 +38,7 @@ export function useThermostat() {
         lastUpdated: null,
         airConditioners: [],
         rooms: [],
+        smartPlugs: [],
     });
     const [stats, setStats] = useState<Stat | undefined>();
     const [isSaving, setIsSaving] = useState(false);
@@ -58,6 +59,7 @@ export function useThermostat() {
             hvacUntil: stateData?.hvac_until ?? prev.hvacUntil,
             airConditioners: stateData?.air_conditioners ?? prev.airConditioners,
             rooms: stateData?.rooms ?? prev.rooms,
+            smartPlugs: stateData?.smart_plugs ?? prev.smartPlugs,
         }));
     }, []);
 
@@ -159,7 +161,8 @@ export function useThermostat() {
                             targetTemp: r.set_temp,
                             hvacUntil: r.hvac_until ?? 0,
                             airConditioners: r.air_conditioners ?? [],
-                            rooms: r.rooms ?? []
+                            rooms: r.rooms ?? [],
+                            smartPlugs: r.smart_plugs ?? []
                         });
                     }
                 });

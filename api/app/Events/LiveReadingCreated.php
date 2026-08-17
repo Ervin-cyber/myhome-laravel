@@ -6,6 +6,7 @@ use App\Models\SystemState;
 use App\Models\TemperatureReading;
 use App\Models\AirConditioner;
 use App\Models\Room;
+use App\Models\SmartPlug;
 use App\Services\ClimateService;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
@@ -39,6 +40,7 @@ class LiveReadingCreated implements ShouldBroadcastNow
             'set_temp' => $systemState?->target_temp,
             'hvac_until' => $systemState?->hvac_until,
             'rooms' => Room::with('airConditioners')->orderBy('sort_order')->get(),
+            'smart_plugs' => SmartPlug::orderBy('id')->get(),
             // Explicit column list: last_seen_at and the model timestamps change on
             // every discovery scan and would otherwise churn this payload, which the
             // Pi diffs to decide whether to re-issue commands.
