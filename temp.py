@@ -70,14 +70,19 @@ MODES = {
     'auto': _enum_member('Mode', 'Auto'),
 }
 
+
+# Device properties send_gree_command writes to. Set through apply_setting,
+# which skips anything this greeclimate build does not have.
+DEVICE_SETTINGS = ('mode', 'fan_speed', 'vertical_swing', 'horizontal_swing', 'xfan')
+
 def report_unmapped_settings():
     """
-    Name every setting this greeclimate build has no member for.
+    Name every setting this greeclimate build cannot express.
 
-    An unresolved name is applied as "leave that setting alone", which is the
-    right thing to do to a compressor but is otherwise invisible: the dashboard
-    would offer a control that quietly does nothing. Saying so once at startup
-    turns that into something findable in the logs.
+    Both an unresolved enum member and a missing device property are applied as
+    "leave that setting alone", which is the right thing to do to a compressor
+    but is otherwise invisible: the dashboard would offer a control that quietly
+    does nothing. Saying so once at startup makes it findable in the logs.
     """
     unmapped = [
         f'{group}.{key}'
@@ -89,6 +94,12 @@ def report_unmapped_settings():
         )
         for key, member in mapping.items()
         if member is None
+    ]
+
+    unmapped += [
+        f'Device.{attribute}'
+        for attribute in DEVICE_SETTINGS
+        if not hasattr(Device, attribute)
     ]
 
     if not unmapped:
