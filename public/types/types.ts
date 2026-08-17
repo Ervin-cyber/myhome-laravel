@@ -8,6 +8,47 @@ export type Mode = 'heating' | 'cooling';
 export type TempSource = 'sensor' | 'ac' | 'none';
 export type HeatSource = 'boiler' | 'ac' | 'none';
 
+/**
+ * Heating vs cooling is decided once for the whole house so rooms can never
+ * fight each other. Dry and fan are comfort choices that make sense in any
+ * season, so a room may opt into one. Null follows the house.
+ */
+export type ModeOverride = 'dry' | 'fan' | null;
+
+export type FanSpeed = 'auto' | 'low' | 'medium_low' | 'medium' | 'medium_high' | 'high';
+
+export const FAN_SPEEDS: { value: FanSpeed; label: string }[] = [
+    { value: 'auto', label: 'Auto' },
+    { value: 'low', label: 'Low' },
+    { value: 'medium_low', label: 'Med-Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'medium_high', label: 'Med-High' },
+    { value: 'high', label: 'High' },
+];
+
+export type SwingVertical = 'off' | 'full' | 'fixed_upper' | 'fixed_middle_up' | 'fixed_middle' | 'fixed_middle_low' | 'fixed_lower';
+export type SwingHorizontal = 'off' | 'full' | 'fixed_left' | 'fixed_middle_left' | 'fixed_middle' | 'fixed_middle_right' | 'fixed_right';
+
+export const SWING_VERTICAL: { value: SwingVertical; label: string }[] = [
+    { value: 'off', label: 'Fixed' },
+    { value: 'full', label: 'Swing' },
+    { value: 'fixed_upper', label: 'Up' },
+    { value: 'fixed_middle_up', label: 'Up-Mid' },
+    { value: 'fixed_middle', label: 'Middle' },
+    { value: 'fixed_middle_low', label: 'Low-Mid' },
+    { value: 'fixed_lower', label: 'Down' },
+];
+
+export const SWING_HORIZONTAL: { value: SwingHorizontal; label: string }[] = [
+    { value: 'off', label: 'Fixed' },
+    { value: 'full', label: 'Swing' },
+    { value: 'fixed_left', label: 'Left' },
+    { value: 'fixed_middle_left', label: 'Mid-Left' },
+    { value: 'fixed_middle', label: 'Centre' },
+    { value: 'fixed_middle_right', label: 'Mid-Right' },
+    { value: 'fixed_right', label: 'Right' },
+];
+
 export interface Room {
     id: number;
     name: string;
@@ -24,6 +65,7 @@ export interface Room {
     calibration_offset: number;
     /** Rooms on 'boiler' share the single house relay. */
     heat_source: HeatSource;
+    mode_override: ModeOverride;
     drives_boiler: boolean;
     current_temp: number | null;
     current_temp_at: string | null;
@@ -43,6 +85,13 @@ export interface AirConditioner {
     target_temp: number;
     enabled: boolean;
     mode: string;
+    /** Running at all. In fan mode a unit is powered while neither heating nor cooling. */
+    power_on: boolean;
+    fan_speed: FanSpeed;
+    swing_vertical: SwingVertical;
+    swing_horizontal: SwingHorizontal;
+    /** Gree's own post-cooling coil dry, so the evaporator does not grow mould. */
+    xfan: boolean;
     heating_on: boolean;
     cooling_on: boolean;
     online: boolean;

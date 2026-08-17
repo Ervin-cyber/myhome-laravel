@@ -23,6 +23,8 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
     Route::post('/state', [SystemStateController::class, 'update']);
 
     Route::get('/rooms', [RoomController::class, 'index']);
+    // Declared before /rooms/{id} so "live" is not read as a room id.
+    Route::post('/rooms/live', [RoomController::class, 'live']);
     Route::post('/rooms/{id}', [RoomController::class, 'update'])
         ->whereNumber('id');
 

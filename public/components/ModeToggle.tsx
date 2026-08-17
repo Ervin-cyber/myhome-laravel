@@ -55,7 +55,9 @@ export default function ModeToggle({ mode, onChangeMode, disabled, hvacOn }: Mod
             </button>
 
             {open && !disabled && (
-                <div className="absolute left-0 top-full mt-2 w-48 rounded-2xl border border-slate-700/80 bg-slate-950/95 shadow-2xl backdrop-blur-sm z-50 overflow-hidden">
+                // Anchored right: the toggle sits at the right edge of the
+                // header, so a left-anchored menu runs off a phone screen.
+                <div className="absolute right-0 top-full mt-2 w-48 max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-700/80 bg-slate-950/95 shadow-2xl backdrop-blur-sm z-50 overflow-hidden">
                     {modes.filter(m => m !== mode).map((m) => {
                         const config = getModeConfig(m, false);
                         return (

@@ -6,6 +6,7 @@ use App\Models\AirConditioner;
 use App\Models\Room;
 use App\Models\SystemState;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Decides what every actuator in the house should be doing.
@@ -20,10 +21,16 @@ class ClimateService
     public const TOLERANCE = 0.2;
 
     /**
-     * A wider deadband for compressors. The boiler may chase a tight band, but
-     * a split must not power-cycle over half a degree of drift.
+     * How far the wrong side of its setpoint a room has to be before its unit
+     * is switched off outright, in °C.
+     *
+     * An inverter split regulates itself better than we can from outside: the
+     * compressor varies its speed, and a start costs far more in wear and
+     * power than a long idle. So we hand the unit a setpoint and leave it
+     * alone, and only cut power when there is genuinely nothing left to
+     * regulate towards — never on a small overshoot.
      */
-    public const AC_TOLERANCE = 0.5;
+    public const IDLE_MARGIN = 2.0;
 
     /**
      * A compressor that is restarted immediately after stopping will fail
@@ -34,9 +41,22 @@ class ClimateService
     /** How long the Pi may keep acting on a document before failing safe. */
     public const CONTROL_TTL_SECONDS = 300;
 
+    /** How long an open dashboard keeps the Pi polling the units. */
+    public const LIVE_WINDOW_SECONDS = 300;
+
+    private const LIVE_CACHE_KEY = 'climate.live_until';
+
     /** Readings outside this range are treated as a broken sensor. */
     private const PLAUSIBLE_MIN = 5.0;
     private const PLAUSIBLE_MAX = 50.0;
+
+    /**
+     * What a Gree will accept as a setpoint. The protocol carries Celsius as a
+     * whole-degree integer, and the unit rejects anything outside this band —
+     * whereas the boiler is regulated by us and can chase any target it likes.
+     */
+    public const AC_TEMP_MIN = 16;
+    public const AC_TEMP_MAX = 30;
 
     /**
      * Evaluate the whole house and persist the resulting per-zone state.
@@ -65,7 +85,9 @@ class ClimateService
             $this->persistRoomState(
                 $room,
                 heating: $boiler && $room->heat_source === 'boiler' && $this->isRoomActive($room, $masterOn),
-                cooling: collect($roomUnits)->contains(fn ($u) => $u['power'] && $u['mode'] === 'cool'),
+                cooling: collect($roomUnits)->contains(
+                    fn ($u) => $u['power'] && in_array($u['mode'], ['cool', 'dry'], true)
+                ),
             );
         }
 
@@ -81,11 +103,34 @@ class ClimateService
         }
 
         return [
-            'v' => 2,
+            'v' => 3,
             'boiler' => $boiler,
             'units' => $units,
+            'live_until' => self::liveUntil(),
             'expires_at' => time() + self::CONTROL_TTL_SECONDS,
         ];
+    }
+
+    /**
+     * Ask the Pi to poll the units frequently for the next few minutes.
+     *
+     * Gree units are only worth interrogating while somebody is watching: the
+     * chatter is pointless otherwise, and it competes with the commands we
+     * actually care about. The window expires on its own so a closed tab, a
+     * crashed browser or a lost connection all stop the polling by default.
+     */
+    public static function requestLiveData(): int
+    {
+        $until = time() + self::LIVE_WINDOW_SECONDS;
+
+        Cache::put(self::LIVE_CACHE_KEY, $until, self::LIVE_WINDOW_SECONDS);
+
+        return $until;
+    }
+
+    public static function liveUntil(): int
+    {
+        return (int) Cache::get(self::LIVE_CACHE_KEY, 0);
     }
 
     /**
@@ -140,17 +185,6 @@ class ClimateService
             : $temp <= ($target - $tolerance);
     }
 
-    private function demandsCool(?float $temp, float $target, bool $currentlyOn, float $tolerance = self::TOLERANCE): bool
-    {
-        if (! $this->isPlausible($temp)) {
-            return false;
-        }
-
-        return $currentlyOn
-            ? $temp > ($target - $tolerance)
-            : $temp >= ($target + $tolerance);
-    }
-
     private function isPlausible(?float $temp): bool
     {
         return $temp !== null && $temp > self::PLAUSIBLE_MIN && $temp < self::PLAUSIBLE_MAX;
@@ -161,16 +195,10 @@ class ClimateService
      */
     private function commandsForRoom(Room $room, string $mode, bool $masterOn): array
     {
-        // The house mode decides what a unit would do; nothing is set per unit.
-        $unitMode = $mode === 'heating' ? 'heat' : 'cool';
+        $unitMode = $room->unitMode($mode);
 
-        // A room heated by its own unit runs it as a heat pump; a room on the
-        // boiler leaves its unit idle all winter.
-        $hasAJob = $mode === 'cooling' || $room->heat_source === 'ac';
-
-        $power = $hasAJob
-            && $this->isRoomActive($room, $masterOn)
-            && $this->roomDemands($room, $unitMode);
+        $power = $this->isRoomActive($room, $masterOn)
+            && $this->unitHasWork($room, $unitMode);
 
         return $room->airConditioners
             ->map(fn (AirConditioner $ac) => $this->unitCommand(
@@ -184,26 +212,53 @@ class ClimateService
     }
 
     /**
-     * Whether the room still wants its unit running.
+     * Whether this room's units have anything to do at all.
      *
-     * A room with its own sensor gets a real thermostat, so the unit stops once
-     * the room is comfortable. A room that reads its temperature *off* the unit
-     * cannot: a powered-off Gree stops reporting, so switching it off would
-     * freeze the reading at the value that caused the switch-off, and nothing
-     * would ever ask it to start again. Those rooms stay powered and leave the
-     * regulating to the split's own inverter, which is what it is good at.
+     * Deliberately not a thermostat. The unit's own inverter is the better
+     * regulator, so the question here is only whether to hand it the room or
+     * not — see IDLE_MARGIN.
      */
-    private function roomDemands(Room $room, string $unitMode): bool
+    private function unitHasWork(Room $room, string $unitMode): bool
     {
+        // Dry and fan are comfort choices, not calls for heating or cooling.
+        if (in_array($unitMode, Room::MODE_OVERRIDES, true)) {
+            return true;
+        }
+
+        // A room with radiators leaves its unit idle all winter.
+        if ($unitMode === 'heat' && $room->heat_source !== 'ac') {
+            return false;
+        }
+
+        // A room that reads its temperature off the unit goes blind the moment
+        // that unit stops: the reading would freeze at the value that caused
+        // the switch-off and nothing would ever ask it to start again. Those
+        // rooms are never switched off on temperature.
         if ($room->temp_source === 'ac') {
             return true;
         }
 
-        $target = (float) $room->target_temp;
+        return ! $this->isBeyondReach($room->current_temp, (float) $room->target_temp, $unitMode);
+    }
 
-        return $unitMode === 'heat'
-            ? $this->demandsHeat($room->current_temp, $target, $room->heating_on, self::AC_TOLERANCE)
-            : $this->demandsCool($room->current_temp, $target, $room->cooling_on, self::AC_TOLERANCE);
+    /**
+     * True when the room sits so far the wrong side of its setpoint that the
+     * unit has nothing left to do — 20°C in a room asking to be cooled to 24°C.
+     *
+     * A missing or implausible reading returns false, leaving the unit running:
+     * with no reading of our own, the split's internal sensor is the better
+     * judge. That is the opposite of the boiler's bias, and deliberately so —
+     * an idling compressor is a small waste, an unattended boiler is not.
+     */
+    private function isBeyondReach(?float $temp, float $target, string $unitMode): bool
+    {
+        if (! $this->isPlausible($temp)) {
+            return false;
+        }
+
+        return $unitMode === 'cool'
+            ? $temp < ($target - self::IDLE_MARGIN)
+            : $temp > ($target + self::IDLE_MARGIN);
     }
 
     /**
@@ -211,7 +266,8 @@ class ClimateService
      */
     private function unitCommand(AirConditioner $ac, bool $power, string $mode, float $target): array
     {
-        if ($power && $this->isCoolingDown($ac)) {
+        // Fan mode never starts the compressor, so it is not held back by it.
+        if ($power && $mode !== 'fan' && $this->isCoolingDown($ac)) {
             $power = false;
         }
 
@@ -224,13 +280,30 @@ class ClimateService
             'port' => $ac->port,
             'power' => $power,
             'mode' => $mode,
-            'target_temp' => (int) round($target),
+            'target_temp' => $this->unitSetpoint($target),
+            'fan_speed' => $ac->fan_speed,
+            'swing_v' => $ac->swing_vertical,
+            'swing_h' => $ac->swing_horizontal,
+            // Gree dries its own coil after cooling; we only set the flag.
+            'xfan' => (bool) $ac->xfan,
         ];
+    }
+
+    /**
+     * A room target expressed as something a Gree can actually be set to.
+     *
+     * A room may legitimately ask for 12°C or 21.5°C — the boiler can chase
+     * either — but the unit cannot, so the value is squared up here rather
+     * than being sent as-is and silently mangled by the unit.
+     */
+    private function unitSetpoint(float $target): int
+    {
+        return (int) max(self::AC_TEMP_MIN, min(self::AC_TEMP_MAX, round($target)));
     }
 
     private function isCoolingDown(AirConditioner $ac): bool
     {
-        if ($ac->cooling_on || $ac->heating_on || ! $ac->power_changed_at) {
+        if ($ac->power_on || ! $ac->power_changed_at) {
             return false;
         }
 
@@ -239,12 +312,16 @@ class ClimateService
 
     private function persistUnitState(AirConditioner $ac, bool $power, string $mode, float $target): void
     {
-        $wasOn = $ac->cooling_on || $ac->heating_on;
+        $wasOn = (bool) $ac->power_on;
 
-        $ac->cooling_on = $power && $mode === 'cool';
+        // Dry runs the compressor too, so it counts as cooling for the
+        // dashboard and for the min-off guard. Fan moves air and nothing else,
+        // which is why power_on is tracked separately from either of these.
+        $ac->power_on = $power;
+        $ac->cooling_on = $power && in_array($mode, ['cool', 'dry'], true);
         $ac->heating_on = $power && $mode === 'heat';
         $ac->mode = $mode;
-        $ac->target_temp = (int) round($target);
+        $ac->target_temp = $this->unitSetpoint($target);
 
         if ($wasOn !== $power) {
             $ac->power_changed_at = now();

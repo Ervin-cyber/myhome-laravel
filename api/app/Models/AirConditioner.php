@@ -16,6 +16,11 @@ class AirConditioner extends Model
         'target_temp',
         'enabled',
         'mode',
+        'power_on',
+        'fan_speed',
+        'swing_vertical',
+        'swing_horizontal',
+        'xfan',
         'heating_on',
         'cooling_on',
         'online',
@@ -26,8 +31,15 @@ class AirConditioner extends Model
         'power_changed_at',
     ];
 
+    /** Values the dashboard may set, mirroring the greeclimate enums. */
+    public const FAN_SPEEDS = ['auto', 'low', 'medium_low', 'medium', 'medium_high', 'high'];
+    public const SWING_VERTICAL = ['off', 'full', 'fixed_upper', 'fixed_middle_up', 'fixed_middle', 'fixed_middle_low', 'fixed_lower'];
+    public const SWING_HORIZONTAL = ['off', 'full', 'fixed_left', 'fixed_middle_left', 'fixed_middle', 'fixed_middle_right', 'fixed_right'];
+
     protected $casts = [
         'enabled' => 'boolean',
+        'power_on' => 'boolean',
+        'xfan' => 'boolean',
         'heating_on' => 'boolean',
         'cooling_on' => 'boolean',
         'online' => 'boolean',
