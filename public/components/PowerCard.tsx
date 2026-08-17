@@ -58,7 +58,8 @@ export default function PowerCard({ plugs, rooms, airConditioners }: Props): JSX
 
             <div className="mt-3 flex flex-col gap-3">
                 {plugs.map((plug) => {
-                    // A plug with no room measures the house, so anything running counts.
+                    // A plug with no room is not restricted to one, so everything
+                    // counts towards what it should be seeing.
                     const covered = plug.room_id === null
                         ? airConditioners
                         : airConditioners.filter((ac) => ac.room_id === plug.room_id);
@@ -67,15 +68,22 @@ export default function PowerCard({ plugs, rooms, airConditioners }: Props): JSX
                     const warning = disagreement(plug, expectedRunning);
                     const room = rooms.find((r) => r.id === plug.room_id);
 
+                    // Name what is actually downstream of the plug rather than
+                    // where it sits, so the label matches what the reading —
+                    // and the mismatch check above it — is really about.
+                    const scope = room?.name
+                        ?? (covered.length === 2 ? 'both ACs'
+                            : covered.length === 1 ? covered[0].name
+                                : covered.length > 0 ? `${covered.length} ACs`
+                                    : 'nothing assigned');
+
                     return (
                         <div key={plug.id} className={`rounded-xl border p-3 ${warning ? 'border-amber-500/50 bg-amber-500/10' : 'border-gray-700/50 bg-gray-900/40'}`}>
                             <div className="flex items-end justify-between gap-3">
                                 <div className="min-w-0">
                                     <p className="truncate text-sm text-gray-300">
                                         {plug.name}
-                                        <span className="ml-2 text-xs text-gray-500">
-                                            {room ? room.name : 'whole house'}
-                                        </span>
+                                        <span className="ml-2 text-xs text-gray-500">{scope}</span>
                                     </p>
                                     <p className="mt-1 flex items-baseline gap-1 text-3xl font-light text-white">
                                         <BoltIcon sx={{ fontSize: 22 }} className="text-amber-400/80" />
