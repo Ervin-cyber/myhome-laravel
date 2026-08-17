@@ -226,20 +226,92 @@ class ClimateServiceTest extends TestCase
         );
     }
 
-    public function test_a_sensed_room_does_not_cycle_inside_the_compressor_deadband(): void
+    public function test_a_small_overshoot_does_not_power_cycle_the_compressor(): void
     {
+        // The inverter is the better regulator: a degree under target is for it
+        // to absorb by slowing down, not for us to answer with a power cut.
         $this->house(['mode' => 'cooling']);
-        $bedroom = $this->bedroom(['target_temp' => 24, 'current_temp' => 24.3, 'cooling_on' => false]);
+        $bedroom = $this->bedroom(['target_temp' => 24, 'current_temp' => 23.2]);
         $ac = $this->unit($bedroom);
 
-        $this->assertFalse(
-            $this->unitFor($this->climate->evaluate(), $ac->mac)['power'],
-            'A third of a degree over target must not start a compressor.'
-        );
-
-        $bedroom = $this->bedroom(['target_temp' => 24, 'current_temp' => 24.6, 'cooling_on' => false]);
-
         $this->assertTrue($this->unitFor($this->climate->evaluate(), $ac->mac)['power']);
+    }
+
+    public function test_a_room_choosing_fan_runs_its_unit_whatever_the_temperature(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $bedroom = $this->bedroom([
+            'mode_override' => 'fan',
+            'target_temp' => 24,
+            'current_temp' => 16,
+        ]);
+        $ac = $this->unit($bedroom);
+
+        $unit = $this->unitFor($this->climate->evaluate(), $ac->mac);
+
+        $this->assertTrue($unit['power'], 'Fan is a comfort choice, not a call for cooling.');
+        $this->assertSame('fan', $unit['mode']);
+        $this->assertFalse($ac->fresh()->cooling_on, 'Moving air is not cooling.');
+    }
+
+    public function test_a_room_choosing_dry_overrides_the_house_mode(): void
+    {
+        $this->house(['mode' => 'heating']);
+        $living = $this->living(['mode_override' => 'dry']);
+        $ac = $this->unit($living);
+
+        $unit = $this->unitFor($this->climate->evaluate(), $ac->mac);
+
+        $this->assertTrue($unit['power']);
+        $this->assertSame('dry', $unit['mode']);
+        $this->assertTrue($ac->fresh()->cooling_on, 'Dry runs the compressor.');
+    }
+
+    public function test_the_house_still_owns_heating_and_cooling(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $bedroom = $this->bedroom(['mode_override' => null, 'current_temp' => 26]);
+        $ac = $this->unit($bedroom);
+
+        $this->assertSame('cool', $this->unitFor($this->climate->evaluate(), $ac->mac)['mode']);
+    }
+
+    public function test_a_unit_is_only_ever_sent_a_setpoint_it_can_accept(): void
+    {
+        // The boiler can chase 21.5°C or 12°C; a Gree carries Celsius as a
+        // whole-degree integer and refuses anything outside 16-30.
+        $this->house(['mode' => 'cooling']);
+        $bedroom = $this->bedroom(['target_temp' => 21.5, 'current_temp' => 26]);
+        $ac = $this->unit($bedroom);
+
+        $this->assertSame(22, $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']);
+
+        $this->bedroom(['target_temp' => 12, 'current_temp' => 26]);
+
+        $this->assertSame(
+            ClimateService::AC_TEMP_MIN,
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp'],
+            'A target below the unit range must be clamped, not sent and mangled.'
+        );
+    }
+
+    public function test_comfort_settings_are_carried_to_the_unit(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $bedroom = $this->bedroom(['current_temp' => 26]);
+        $ac = $this->unit($bedroom, [
+            'fan_speed' => 'medium',
+            'swing_vertical' => 'full',
+            'swing_horizontal' => 'fixed_middle',
+            'xfan' => true,
+        ]);
+
+        $unit = $this->unitFor($this->climate->evaluate(), $ac->mac);
+
+        $this->assertSame('medium', $unit['fan_speed']);
+        $this->assertSame('full', $unit['swing_v']);
+        $this->assertSame('fixed_middle', $unit['swing_h']);
+        $this->assertTrue($unit['xfan']);
     }
 
     public function test_a_room_sensed_by_its_own_unit_keeps_the_unit_powered(): void
@@ -314,6 +386,46 @@ class ClimateServiceTest extends TestCase
         $this->assertTrue($this->unitFor($this->climate->evaluate(), $ac->mac)['power']);
     }
 
+    public function test_fan_mode_is_not_held_back_by_the_compressor_guard(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $bedroom = $this->bedroom(['mode_override' => 'fan', 'current_temp' => 26]);
+        $ac = $this->unit($bedroom, [
+            'power_on' => false,
+            'power_changed_at' => now()->subSeconds(30),
+        ]);
+
+        $this->assertTrue(
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['power'],
+            'Fan moves air without starting the compressor, so the min-off guard does not apply.'
+        );
+    }
+
+    public function test_a_unit_running_in_fan_mode_counts_as_powered(): void
+    {
+        // power_on cannot be inferred from cooling_on/heating_on: in fan mode a
+        // unit is running while doing neither, and treating that as "off" would
+        // re-stamp power_changed_at on every evaluation.
+        $this->house(['mode' => 'cooling']);
+        $bedroom = $this->bedroom(['mode_override' => 'fan', 'current_temp' => 26]);
+        $ac = $this->unit($bedroom);
+
+        $this->climate->evaluate();
+        $ac->refresh();
+        $stamped = $ac->power_changed_at;
+
+        $this->assertTrue($ac->power_on);
+        $this->assertFalse($ac->cooling_on);
+
+        $this->climate->evaluate();
+
+        $this->assertEquals(
+            $stamped,
+            $ac->fresh()->power_changed_at,
+            'A unit that has not changed state must not be re-stamped.'
+        );
+    }
+
     public function test_unassigned_units_follow_the_house_using_their_own_setpoint(): void
     {
         $this->house(['mode' => 'cooling']);
@@ -339,8 +451,19 @@ class ClimateServiceTest extends TestCase
 
         $control = $this->climate->evaluate();
 
-        $this->assertSame(2, $control['v']);
+        $this->assertSame(3, $control['v']);
         $this->assertGreaterThan(time(), $control['expires_at']);
+    }
+
+    public function test_live_polling_is_off_until_a_dashboard_asks_for_it(): void
+    {
+        $this->house();
+
+        $this->assertSame(0, $this->climate->evaluate()['live_until'], 'Nobody is watching.');
+
+        ClimateService::requestLiveData();
+
+        $this->assertGreaterThan(time(), $this->climate->evaluate()['live_until']);
     }
 
     public function test_room_state_is_persisted_for_the_dashboard(): void

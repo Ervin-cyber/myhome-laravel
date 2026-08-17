@@ -10,8 +10,104 @@ import os
 import threading
 from greeclimate.discovery import Discovery
 from greeclimate.device import Device, Mode
+import greeclimate.device as gree_device
 import asyncio
 from dotenv import load_dotenv
+
+def _enum_member(enum_name, *candidates):
+    """
+    Look a member up by any of several spellings.
+
+    greeclimate has renamed these enums between releases, and this script runs
+    on whatever is installed on the Pi. An unknown name degrades to None, which
+    means "leave that setting alone", rather than crashing the control loop.
+    """
+    enum_cls = getattr(gree_device, enum_name, None)
+    if enum_cls is None:
+        return None
+
+    for candidate in candidates:
+        member = getattr(enum_cls, candidate, None)
+        if member is not None:
+            return member
+
+    return None
+
+FAN_SPEEDS = {
+    'auto': _enum_member('FanSpeed', 'Auto'),
+    'low': _enum_member('FanSpeed', 'Low'),
+    'medium_low': _enum_member('FanSpeed', 'MediumLow'),
+    'medium': _enum_member('FanSpeed', 'Medium'),
+    'medium_high': _enum_member('FanSpeed', 'MediumHigh'),
+    'high': _enum_member('FanSpeed', 'High'),
+}
+
+VERTICAL_SWING = {
+    'off': _enum_member('VerticalSwing', 'Default', 'Off'),
+    'full': _enum_member('VerticalSwing', 'FullSwing', 'Full'),
+    'fixed_upper': _enum_member('VerticalSwing', 'FixedUpper', 'Upper'),
+    'fixed_middle_up': _enum_member('VerticalSwing', 'FixedUpperMiddle', 'FixedMiddleUp'),
+    'fixed_middle': _enum_member('VerticalSwing', 'FixedMiddle', 'Middle'),
+    'fixed_middle_low': _enum_member('VerticalSwing', 'FixedLowerMiddle', 'FixedMiddleLow'),
+    'fixed_lower': _enum_member('VerticalSwing', 'FixedLower', 'Lower'),
+}
+
+HORIZONTAL_SWING = {
+    'off': _enum_member('HorizontalSwing', 'Default', 'Off'),
+    'full': _enum_member('HorizontalSwing', 'FullSwing', 'Full'),
+    'fixed_left': _enum_member('HorizontalSwing', 'Left'),
+    'fixed_middle_left': _enum_member('HorizontalSwing', 'LeftCenter', 'MiddleLeft'),
+    'fixed_middle': _enum_member('HorizontalSwing', 'Center', 'Middle'),
+    'fixed_middle_right': _enum_member('HorizontalSwing', 'RightCenter', 'MiddleRight'),
+    'fixed_right': _enum_member('HorizontalSwing', 'Right'),
+}
+
+MODES = {
+    'cool': _enum_member('Mode', 'Cool'),
+    'heat': _enum_member('Mode', 'Heat'),
+    'dry': _enum_member('Mode', 'Dry'),
+    'fan': _enum_member('Mode', 'Fan'),
+    'auto': _enum_member('Mode', 'Auto'),
+}
+
+
+# Device properties send_gree_command writes to. Set through apply_setting,
+# which skips anything this greeclimate build does not have.
+DEVICE_SETTINGS = ('mode', 'fan_speed', 'vertical_swing', 'horizontal_swing', 'xfan')
+
+def report_unmapped_settings():
+    """
+    Name every setting this greeclimate build cannot express.
+
+    Both an unresolved enum member and a missing device property are applied as
+    "leave that setting alone", which is the right thing to do to a compressor
+    but is otherwise invisible: the dashboard would offer a control that quietly
+    does nothing. Saying so once at startup makes it findable in the logs.
+    """
+    unmapped = [
+        f'{group}.{key}'
+        for group, mapping in (
+            ('mode', MODES),
+            ('fan_speed', FAN_SPEEDS),
+            ('swing_v', VERTICAL_SWING),
+            ('swing_h', HORIZONTAL_SWING),
+        )
+        for key, member in mapping.items()
+        if member is None
+    ]
+
+    unmapped += [
+        f'Device.{attribute}'
+        for attribute in DEVICE_SETTINGS
+        if not hasattr(Device, attribute)
+    ]
+
+    if not unmapped:
+        return
+
+    message = 'greeclimate has no member for: ' + ', '.join(unmapped)
+    print(f"WARNING: {message}. Those controls will do nothing.")
+    send_ntfy_alert(message, "warning", key="unmapped_settings")
 
 # Global variable to store found and paired AC units
 GREE_DEVICES = {}
@@ -25,12 +121,16 @@ ws_app = None
 ac_loop = None
 ac_loop_thread = None
 
-# Last state actually pushed to each unit, keyed by MAC:
-# (power, target_temp, mode, sent_at). Used to skip redundant LAN commands —
-# the broadcast fires on every sensor reading, but a unit only needs a command
-# when what we want from it actually changes.
+# Last state actually pushed to each unit, keyed by MAC: (desired, sent_at).
+# Used to skip redundant LAN commands — the broadcast fires on every sensor
+# reading, but a unit only needs a command when what we want from it changes.
 last_sent_ac_state = {}
 AC_RESEND_INTERVAL = 600  # re-assert state at least every 10 min, in case of remote-control changes
+
+# While a dashboard is open the API asks us to interrogate the units directly,
+# so the page shows what they actually report rather than what we last told
+# them. The window is carried in the control document and expires on its own.
+LIVE_POLL_INTERVAL = 15
 
 # The API decides, this script only applies. If no control document arrives
 # within the deadline the hardware is failed safe, so a dead API or a dropped
@@ -233,7 +333,35 @@ async def init_gree_ac():
     except Exception as e:
         print(f"Error during search: {e}")
 
-async def send_gree_command(ac, power_on, target_temp, mode='cool'):
+def desired_state(unit):
+    """
+    Everything we want a unit to be, as a tuple that can be compared.
+
+    While a unit is off, mode, setpoint and airflow are all meaningless, so
+    they are left out entirely — otherwise a target change on a sleeping unit
+    would look like a reason to wake the LAN up and talk to it.
+    """
+    if not bool(unit.get('power')):
+        return (False,)
+
+    return (
+        True,
+        int(float(unit.get('target_temp') or 24)),
+        unit.get('mode') or 'cool',
+        unit.get('fan_speed') or 'auto',
+        unit.get('swing_v') or 'off',
+        unit.get('swing_h') or 'off',
+        bool(unit.get('xfan')),
+    )
+
+def apply_setting(device, attribute, value):
+    """Set an optional device property, tolerating older library versions."""
+    if value is None or not hasattr(device, attribute):
+        return
+
+    setattr(device, attribute, value)
+
+async def send_gree_command(ac, desired):
     """Push desired state to one unit. Returns a sync entry if a reading was observed."""
     global GREE_DEVICES, gree_lock
 
@@ -250,20 +378,30 @@ async def send_gree_command(ac, power_on, target_temp, mode='cool'):
          # If still not found, do nothing
          return None
 
-    print(f"send_gree_command: IP={ip}, Power={power_on}, Mode={mode}, TargetTemp={target_temp}")
+    power_on = desired[0]
+    print(f"send_gree_command: IP={ip}, desired={desired}")
     async with gree_lock:
         try:
             await asyncio.wait_for(device.update_state(), timeout=5.0)
 
             device.power = power_on
             if power_on:
-                device.mode = Mode.Heat if mode == 'heat' else Mode.Cool
-                device.target_temperature = int(float(target_temp))
+                _, target_temp, mode, fan_speed, swing_v, swing_h, xfan = desired
+
+                apply_setting(device, 'mode', MODES.get(mode))
+                device.target_temperature = target_temp
+                apply_setting(device, 'fan_speed', FAN_SPEEDS.get(fan_speed))
+                apply_setting(device, 'vertical_swing', VERTICAL_SWING.get(swing_v))
+                apply_setting(device, 'horizontal_swing', HORIZONTAL_SWING.get(swing_h))
+
+                # Gree's own post-cooling coil dry. Re-asserted with everything
+                # else so a unit someone reset with the remote gets it back.
+                apply_setting(device, 'xfan', xfan)
 
             await asyncio.wait_for(device.push_state_update(), timeout=5.0)
-            print(f"[{ip}] Gree command SUCCESSFUL: Power={power_on}, Mode={mode}, Temp={target_temp}°C")
+            print(f"[{ip}] Gree command SUCCESSFUL: {desired}")
 
-            last_sent_ac_state[mac] = (power_on, int(float(target_temp)), mode, time.time())
+            last_sent_ac_state[mac] = (desired, time.time())
 
             observed = None
             if device.current_temperature is not None:
@@ -291,25 +429,18 @@ async def send_gree_command(ac, power_on, target_temp, mode='cool'):
              send_ntfy_alert(f"Gree command error ({ip}): {err_msg}", "warning", key=f"ac_cmd_{ip}")
              return None
 
-def needs_command(mac, power_on, target_temp, mode):
+def needs_command(mac, desired):
     """Skip units already in the desired state, re-asserting periodically."""
     previous = last_sent_ac_state.get(mac)
     if previous is None:
         return True
 
-    prev_power, prev_temp, prev_mode, sent_at = previous
+    prev_desired, sent_at = previous
 
     if time.time() - sent_at > AC_RESEND_INTERVAL:
         return True
 
-    if prev_power != power_on:
-        return True
-
-    # Mode and target temperature are irrelevant while the unit is off.
-    if not power_on:
-        return False
-
-    return prev_mode != mode or prev_temp != int(float(target_temp))
+    return prev_desired != desired
 
 def apply_units(units):
     """
@@ -317,7 +448,7 @@ def apply_units(units):
 
     A split AC has its own thermostat, so we never bang-bang its power against
     the room temperature — that is what wears out a compressor. We set power,
-    mode and setpoint, and let the unit regulate itself.
+    mode, setpoint and airflow, and let the unit regulate itself.
     """
     async def update_acs():
         observed = []
@@ -327,14 +458,12 @@ def apply_units(units):
             if not mac:
                 continue
 
-            power = bool(unit.get('power'))
-            target_temp = unit.get('target_temp') or 24
-            mode = unit.get('mode') or 'cool'
+            desired = desired_state(unit)
 
-            if not needs_command(mac, power, target_temp, mode):
+            if not needs_command(mac, desired):
                 continue
 
-            result = await send_gree_command(unit, power, target_temp, mode)
+            result = await send_gree_command(unit, desired)
             if result:
                 observed.append(result)
 
@@ -358,7 +487,7 @@ def turn_off_all_acs():
 
     async def stop_all():
         for ac in known:
-            await send_gree_command(ac, False, 24)
+            await send_gree_command(ac, (False,))
 
     run_on_ac_loop(stop_all(), timeout=30)
 
@@ -427,6 +556,61 @@ def fail_safe(reason):
     report_actual_state(False, False)
     send_ntfy_alert(f"Climate control failsafe: {reason}", "warning", key="failsafe")
 
+def poll_unit_state():
+    """
+    Read what the units actually report, without commanding them.
+
+    Only ever called inside a live window, because interrogating a Gree over
+    the LAN is not free: the chatter competes with the commands that matter,
+    and nothing is listening to the answer unless a dashboard is open.
+    """
+    units = [u for u in (last_control or {}).get('units', []) if u.get('mac')]
+    if not units:
+        return
+
+    async def read_all():
+        observed = []
+
+        async with gree_lock:
+            for unit in units:
+                device = GREE_DEVICES.get(unit['mac'])
+                if not device:
+                    continue
+
+                try:
+                    await asyncio.wait_for(device.update_state(), timeout=5.0)
+                except Exception as exc:
+                    print(f"[{unit.get('ip')}] live poll failed: {type(exc).__name__}")
+                    continue
+
+                if device.current_temperature is None:
+                    continue
+
+                observed.append({
+                    'mac': unit['mac'],
+                    'name': unit.get('name') or unit['mac'],
+                    'ip': unit.get('ip'),
+                    'port': unit.get('port') or 7000,
+                    'reported_temp': device.current_temperature,
+                })
+
+        return observed
+
+    post_ac_sync(run_on_ac_loop(read_all()) or [])
+
+def live_poller():
+    """Poll the units while a dashboard is watching, and not a moment longer."""
+    while True:
+        time.sleep(LIVE_POLL_INTERVAL)
+
+        if failsafe_tripped:
+            continue
+
+        live_until = (last_control or {}).get('live_until') or 0
+
+        if time.time() < live_until:
+            poll_unit_state()
+
 def control_watchdog():
     """
     Fail safe when the API stops talking to us.
@@ -475,11 +659,14 @@ def comparable_control(control):
     """
     The parts of a control document that describe what the hardware should do.
 
-    expires_at moves on every evaluation and temperatures change on every
-    reading, so neither belongs in the comparison that decides whether the
-    units need to hear from us again.
+    expires_at moves on every evaluation and live_until moves every time a
+    dashboard is opened, so neither belongs in the comparison that decides
+    whether the units need to hear from us again. Somebody looking at a page
+    is not a reason to talk to a compressor.
     """
-    return {k: v for k, v in control.items() if k != 'expires_at'}
+    ignored = ('expires_at', 'live_until')
+
+    return {k: v for k, v in control.items() if k not in ignored}
 
 def on_message(ws, message):
     global previous_control_data, last_control_at, last_control
@@ -555,7 +742,9 @@ if __name__ == '__main__':
         start_ac_loop()
         run_on_ac_loop(init_gree_ac(), timeout=60)
 
+        report_unmapped_settings()
         threading.Thread(target=control_watchdog, name="control-watchdog", daemon=True).start()
+        threading.Thread(target=live_poller, name="live-poller", daemon=True).start()
 
         # Act on the current state immediately rather than waiting for the
         # next sensor reading to produce a broadcast.

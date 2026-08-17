@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AppRouterCacheProvider } from "@mui/material-nextjs/v13-appRouter";
@@ -20,6 +20,16 @@ export const metadata: Metadata = {
   description: "Next.js Home Control App",
 };
 
+// The dashboard is used one-handed on a phone far more than on a desktop.
+// viewport-fit lets the layout reach under the home indicator, which the
+// safe-area padding in Dashboard then accounts for.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#111827",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -28,7 +38,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} min-h-[100dvh] w-full overflow-x-hidden bg-gray-900 antialiased`}
       ><AppRouterCacheProvider>
           <NotificationProvider>
             <FloatingParticles />

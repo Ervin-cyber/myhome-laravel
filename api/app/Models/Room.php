@@ -7,6 +7,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Room extends Model
 {
+    /** Modes a room may choose for itself, on top of the house heat/cool decision. */
+    public const MODE_OVERRIDES = ['dry', 'fan'];
+
     protected $fillable = [
         'name',
         'slug',
@@ -19,6 +22,7 @@ class Room extends Model
         'sensor_device',
         'calibration_offset',
         'heat_source',
+        'mode_override',
         'drives_boiler',
         'current_temp',
         'current_temp_at',
@@ -61,6 +65,22 @@ class Room extends Model
     public function isActive(): bool
     {
         return $this->enabled || $this->is_boosting;
+    }
+
+    /**
+     * What this room's units should be doing.
+     *
+     * Heating and cooling are decided once for the house, so that no two rooms
+     * can ever fight each other. Dry and fan are neither — they are comfort
+     * choices that make sense in any season — so a room may opt into one.
+     */
+    public function unitMode(string $houseMode): string
+    {
+        if (in_array($this->mode_override, self::MODE_OVERRIDES, true)) {
+            return $this->mode_override;
+        }
+
+        return $houseMode === 'heating' ? 'heat' : 'cool';
     }
 
     /**

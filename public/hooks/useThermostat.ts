@@ -1,15 +1,31 @@
 import { createEcho } from '@/lib/echo';
-import { AirConditioner, FetchLatestDataResponse, LiveReadingEvent, Mode, Stat, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
+import { AirConditioner, FetchLatestDataResponse, LiveReadingEvent, Mode, Room, Stat, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRefetchOnFocus } from './useRefetchOnFocus';
 import { useNotification } from '@/context/NotificationContext';
 
+type WriteTarget = 'ac' | 'room';
+
+const ENDPOINTS: Record<WriteTarget, string> = {
+    ac: '/proxy/api/air-conditioners',
+    room: '/proxy/api/rooms',
+};
+
+const writeKey = (target: WriteTarget, id: number) => `${target}:${id}`;
+
+/**
+ * Re-arm the live window a little before it lapses, so an open dashboard keeps
+ * showing what the units actually report without the Pi polling them forever.
+ */
+const LIVE_REARM_MS = 4 * 60 * 1000;
+
 export function useThermostat() {
     const { showNotification } = useNotification();
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-    // Debounce timers and coalesced payloads, keyed by AC id.
-    const acTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
-    const acWritesRef = useRef<Map<number, Partial<AirConditioner>>>(new Map());
+    // Debounce timers and coalesced payloads, keyed by "ac:3" / "room:1", so a
+    // stepper held down produces one write per entity rather than one per tap.
+    const timersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+    const writesRef = useRef<Map<string, Partial<AirConditioner> | Partial<Room>>>(new Map());
 
     const [data, setData] = useState<ThermostatData>({
         currentTemp: 0,
@@ -25,8 +41,9 @@ export function useThermostat() {
     });
     const [stats, setStats] = useState<Stat | undefined>();
     const [isSaving, setIsSaving] = useState(false);
-    // Per-unit, so adjusting one AC does not freeze the controls of the others.
+    // Per-entity, so adjusting one card does not freeze the controls of the others.
     const [pendingAcIds, setPendingAcIds] = useState<number[]>([]);
+    const [pendingRoomIds, setPendingRoomIds] = useState<number[]>([]);
 
     const processUpdate = useCallback((tempData: TemperatureResponse, stateData: SystemStateResponse) => {
         setData(prev => ({
@@ -92,14 +109,39 @@ export function useThermostat() {
         }
     }, [fetchStats, fetchLatestData, processUpdate]);
 
-    useRefetchOnFocus(refreshData);
+    /**
+     * Ask the Pi to interrogate the units directly for the next few minutes.
+     *
+     * The window is short and self-expiring, so a closed tab, a crashed browser
+     * or a lost connection all stop the polling without having to tell anyone.
+     */
+    const requestLiveData = useCallback(async () => {
+        try {
+            await fetchClient('/proxy/api/rooms/live', { method: 'POST' });
+        } catch (error) {
+            // Live readings are a nicety; the dashboard works without them.
+            console.error('Could not open a live window', error);
+        }
+    }, [fetchClient]);
+
+    useRefetchOnFocus(useCallback(() => {
+        refreshData();
+        requestLiveData();
+    }, [refreshData, requestLiveData]));
 
     useEffect(() => {
         refreshData();
+        requestLiveData();
 
         const pollInterval = setInterval(() => {
             fetchStats().then(setStats).catch(console.error);
         }, 15000);
+
+        // Only while the tab is actually in front: a dashboard left open on a
+        // background tab is nobody watching.
+        const liveInterval = setInterval(() => {
+            if (document.visibilityState === 'visible') requestLiveData();
+        }, LIVE_REARM_MS);
 
         const echo = createEcho();
         if (echo) {
@@ -123,15 +165,16 @@ export function useThermostat() {
                 });
         }
 
-        const acTimers = acTimersRef.current;
+        const timers = timersRef.current;
 
         return () => {
             clearInterval(pollInterval);
+            clearInterval(liveInterval);
             if (echo) echo.leave('live-updates');
-            acTimers.forEach(clearTimeout);
-            acTimers.clear();
+            timers.forEach(clearTimeout);
+            timers.clear();
         };
-    }, [refreshData, fetchStats]);
+    }, [refreshData, fetchStats, requestLiveData]);
 
     const updateState = useCallback(async (body: Record<string, unknown>) => {
         const res = await fetchClient('/proxy/api/state', {
@@ -143,56 +186,71 @@ export function useThermostat() {
         return res.json();
     }, [fetchClient]);
 
-    const flushAcState = useCallback(async (acId: number) => {
-        const body = acWritesRef.current.get(acId);
-        acWritesRef.current.delete(acId);
-        acTimersRef.current.delete(acId);
+    const flush = useCallback(async (target: WriteTarget, id: number) => {
+        const key = writeKey(target, id);
+        const body = writesRef.current.get(key);
+        writesRef.current.delete(key);
+        timersRef.current.delete(key);
 
-        if (!body) return;
+        const setPending = target === 'ac' ? setPendingAcIds : setPendingRoomIds;
+
+        if (!body) {
+            setPending(prev => prev.filter(pending => pending !== id));
+            return;
+        }
 
         try {
-            const res = await fetchClient(`/proxy/api/air-conditioners/${acId}`, {
+            const res = await fetchClient(`${ENDPOINTS[target]}/${id}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
-            if (!res.ok) throw new Error('Failed to update AC');
+            if (!res.ok) throw new Error('Request rejected');
 
-            const saved: AirConditioner = await res.json();
-            setData(prev => ({
-                ...prev,
-                airConditioners: prev.airConditioners.map(ac => (ac.id === acId ? saved : ac)),
-            }));
+            const saved = await res.json();
+
+            setData(prev => target === 'ac'
+                ? { ...prev, airConditioners: prev.airConditioners.map(ac => (ac.id === id ? saved : ac)) }
+                : { ...prev, rooms: prev.rooms.map(room => (room.id === id ? saved : room)) });
         } catch (error) {
             console.error(error);
-            showNotification('Failed to update AC', 'error');
+            showNotification(target === 'ac' ? 'Failed to update AC' : 'Failed to update room', 'error');
             // Roll the optimistic change back to whatever the server last told us.
             refreshData();
         } finally {
-            setPendingAcIds(prev => prev.filter(id => id !== acId));
+            setPending(prev => prev.filter(pending => pending !== id));
         }
     }, [fetchClient, showNotification, refreshData]);
 
-    const updateAcState = useCallback((acId: number, body: Partial<AirConditioner>) => {
-        // Optimistic: the stepper must feel instant. The response, and the
+    const queueWrite = useCallback((target: WriteTarget, id: number, body: Partial<AirConditioner> | Partial<Room>) => {
+        // Optimistic: a stepper must feel instant. The response, and the
         // broadcast that follows it, are the source of truth and overwrite this.
-        setData(prev => ({
-            ...prev,
-            airConditioners: prev.airConditioners.map(ac =>
-                ac.id === acId ? { ...ac, ...body } : ac
-            ),
-        }));
+        setData(prev => target === 'ac'
+            ? { ...prev, airConditioners: prev.airConditioners.map(ac => (ac.id === id ? { ...ac, ...body } : ac)) }
+            : { ...prev, rooms: prev.rooms.map(room => (room.id === id ? { ...room, ...body } : room)) });
 
-        setPendingAcIds(prev => (prev.includes(acId) ? prev : [...prev, acId]));
+        const setPending = target === 'ac' ? setPendingAcIds : setPendingRoomIds;
+        setPending(prev => (prev.includes(id) ? prev : [...prev, id]));
 
-        // Coalesce rapid stepper taps into a single write per unit.
-        acWritesRef.current.set(acId, { ...acWritesRef.current.get(acId), ...body });
+        // Coalesce rapid taps into a single write per entity.
+        const key = writeKey(target, id);
+        writesRef.current.set(key, { ...writesRef.current.get(key), ...body });
 
-        const existing = acTimersRef.current.get(acId);
+        const existing = timersRef.current.get(key);
         if (existing) clearTimeout(existing);
 
-        acTimersRef.current.set(acId, setTimeout(() => { flushAcState(acId); }, 300));
-    }, [flushAcState]);
+        timersRef.current.set(key, setTimeout(() => { flush(target, id); }, 300));
+    }, [flush]);
+
+    const updateAcState = useCallback(
+        (acId: number, body: Partial<AirConditioner>) => queueWrite('ac', acId, body),
+        [queueWrite]
+    );
+
+    const updateRoomState = useCallback(
+        (roomId: number, body: Partial<Room>) => queueWrite('room', roomId, body),
+        [queueWrite]
+    );
 
     const saveState = async (val: number, until: number) => {
         if (val < 10 || until < 0) return;
@@ -269,10 +327,12 @@ export function useThermostat() {
         stats,
         isSaving,
         pendingAcIds,
+        pendingRoomIds,
         saveState,
         refreshData,
         changeMode,
         togglePower,
-        updateAcState
+        updateAcState,
+        updateRoomState
     };
 }

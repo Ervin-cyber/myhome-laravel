@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Events\LiveReadingCreated;
 use App\Models\Room;
+use App\Services\ClimateService;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class RoomController extends Controller
 {
@@ -18,6 +20,19 @@ class RoomController extends Controller
         );
     }
 
+    /**
+     * Open a window during which the Pi interrogates the units directly, so an
+     * open dashboard shows what they actually report rather than what we last
+     * told them. Expires on its own, so a closed tab stops the polling.
+     */
+    public function live()
+    {
+        return response()->json([
+            'live_until' => ClimateService::requestLiveData(),
+            'window' => ClimateService::LIVE_WINDOW_SECONDS,
+        ]);
+    }
+
     public function update(Request $request, $id)
     {
         $room = Room::findOrFail($id);
@@ -29,6 +44,8 @@ class RoomController extends Controller
             // Minutes from the boost buttons, or 0 to cancel.
             'hvac_until' => 'sometimes|integer|min:0',
             'calibration_offset' => 'sometimes|numeric|between:-10,10',
+            // Null hands the room back to the house heat/cool decision.
+            'mode_override' => ['sometimes', 'nullable', Rule::in(Room::MODE_OVERRIDES)],
         ]);
 
         if (array_key_exists('hvac_until', $data)) {

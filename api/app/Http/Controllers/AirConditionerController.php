@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AirConditioner;
 use App\Models\Room;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use App\Events\LiveReadingCreated;
 
 class AirConditionerController extends Controller
@@ -120,6 +121,10 @@ class AirConditionerController extends Controller
             'heating_on' => 'sometimes|boolean',
             'cooling_on' => 'sometimes|boolean',
             'calibration_offset' => 'sometimes|numeric|between:-10,10',
+            'fan_speed' => ['sometimes', Rule::in(AirConditioner::FAN_SPEEDS)],
+            'swing_vertical' => ['sometimes', Rule::in(AirConditioner::SWING_VERTICAL)],
+            'swing_horizontal' => ['sometimes', Rule::in(AirConditioner::SWING_HORIZONTAL)],
+            'xfan' => 'sometimes|boolean',
         ]);
 
         $ac->fill($data);

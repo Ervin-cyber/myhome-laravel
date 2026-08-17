@@ -91,18 +91,21 @@ services:
     build:
       context: ./public
       dockerfile: Dockerfile
+      # The default (production) stage is a Next.js standalone bundle with no
+      # `next` CLI in it, so `npm run dev` cannot start there. `deps` is the
+      # stage that has run `npm ci`, which is what a dev server needs.
+      target: deps
     command: npm run dev
     container_name: nextjs-frontend-local
-    # The image runs as the unprivileged `nextjs` user, but ./public is
-    # bind-mounted from the host and owned by the host user, so `next dev`
-    # cannot write .next. Local development only; production keeps the
-    # unprivileged user from the Dockerfile.
-    user: root
     restart: unless-stopped
     volumes:
       - ./public:/app
-      - /app/node_modules
-      - /app/.next
+      # Named, not anonymous: an anonymous volume is discarded by `compose down`
+      # and the replacement is seeded from the image, which is how this ends up
+      # with a node_modules that has no dev dependencies in it. These also keep
+      # the container's Linux binaries away from the host's macOS ones.
+      - nextjs_node_modules:/app/node_modules
+      - nextjs_next_cache:/app/.next
     environment:
       - HOST=0.0.0.0
       - NODE_ENV=development
@@ -116,6 +119,8 @@ services:
 
 volumes:
   redisdata_local:
+  nextjs_node_modules:
+  nextjs_next_cache:
 
 networks:
   app-network:
