@@ -72,6 +72,8 @@ class LiveReadingCreated implements ShouldBroadcastNow
                 'observed_state',
                 'observed_at',
                 'settings_changed_at',
+                'manual_power',
+                'manual_since',
             ]),
         ];
     }

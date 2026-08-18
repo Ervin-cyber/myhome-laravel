@@ -35,12 +35,18 @@ const MODE_CHOICES: { value: ModeOverride; label: string; hint: string }[] = [
  */
 function summariseUnits(units: AirConditioner[]): { title: string; detail: string; warn: boolean } {
     const offline = units.filter((ac) => !ac.online);
+    const byRemote = units.filter((ac) => ac.following_remote);
 
     if (units.length === 1) {
         const [ac] = units;
         const fan = FAN_SPEEDS.find((f) => f.value === ac.fan_speed)?.label ?? ac.fan_speed;
 
         if (!ac.online) return { title: ac.name, detail: 'offline', warn: true };
+        // Ahead of "parked", because it is the more recent decision and the one
+        // that explains why the room is not doing what the card otherwise says.
+        if (ac.following_remote) {
+            return { title: ac.name, detail: ac.manual_power ? 'on by remote' : 'off by remote', warn: true };
+        }
         if (!ac.enabled) return { title: ac.name, detail: 'parked', warn: true };
 
         return { title: ac.name, detail: `fan ${fan.toLowerCase()}`, warn: false };
@@ -49,6 +55,7 @@ function summariseUnits(units: AirConditioner[]): { title: string; detail: strin
     const title = `${units.length} units`;
 
     if (offline.length > 0) return { title, detail: `${offline.length} offline`, warn: true };
+    if (byRemote.length > 0) return { title, detail: `${byRemote.length} by remote`, warn: true };
 
     const running = units.filter((ac) => ac.power_on).length;
 
@@ -89,6 +96,11 @@ export default function RoomCard({
     // its own return air and reads warm. Worth showing, but quietly: it is not
     // what the room is regulated against. Omitted where the room already reads
     // from the unit, since that would print the same number twice.
+    // Worth saying on the room card rather than only inside the unit list: it
+    // is the reason the room is not doing what the rest of this card implies,
+    // and it is not obvious that the room's own switch is what undoes it.
+    const byRemote = units.filter((ac) => ac.following_remote);
+
     const unitReadings = room.temp_source === 'ac'
         ? []
         : units
@@ -187,6 +199,15 @@ export default function RoomCard({
                     </button>
                 </div>
             </div>
+
+            {byRemote.length > 0 && (
+                <p className="mt-3 rounded-xl border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-xs text-violet-200">
+                    {byRemote.length === units.length && units.length === 1
+                        ? `Switched ${byRemote[0].manual_power ? 'on' : 'off'} by remote.`
+                        : `${byRemote.length} of ${units.length} units switched by remote.`}
+                    {' '}Left alone until you use the controls here.
+                </p>
+            )}
 
             {units.length > 0 && (
                 <div className="mt-4">
