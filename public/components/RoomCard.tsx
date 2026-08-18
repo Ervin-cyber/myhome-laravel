@@ -26,6 +26,11 @@ const MODE_CHOICES: { value: ModeOverride; label: string; hint: string }[] = [
     { value: 'fan', label: 'Fan', hint: 'Move air only' },
 ];
 
+/** What the unit calls each mode, for saying what it is actually in. */
+const MODE_LABELS: Record<string, string> = {
+    cool: 'Cool', heat: 'Heat', dry: 'Dry', fan: 'Fan', auto: 'Auto',
+};
+
 /**
  * How the collapsed unit row reads.
  *
@@ -45,7 +50,7 @@ function summariseUnits(units: AirConditioner[]): { title: string; detail: strin
         // Ahead of "parked", because it is the more recent decision and the one
         // that explains why the room is not doing what the card otherwise says.
         if (ac.following_remote) {
-            return { title: ac.name, detail: ac.manual_power ? 'on by remote' : 'off by remote', warn: true };
+            return { title: ac.name, detail: ac.manual_power ? 'running · by remote' : 'off · by remote', warn: true };
         }
         if (!ac.enabled) return { title: ac.name, detail: 'parked', warn: true };
 
@@ -62,7 +67,13 @@ function summariseUnits(units: AirConditioner[]): { title: string; detail: strin
     return { title, detail: running > 0 ? `${running} running` : 'all idle', warn: false };
 }
 
-/** What this room is doing right now, in words. */
+/**
+ * What this room is doing right now, in words.
+ *
+ * Says the state and nothing about who asked for it. A unit switched on by hand
+ * is running, and the card should read the same as if the app had started it --
+ * how it came to be running is a footnote, not the headline.
+ */
 function statusOf(room: Room, active: boolean): { label: string; tone: string } {
     if (!active) return { label: 'Off', tone: 'bg-gray-700/50 text-gray-400' };
     if (room.mode_override === 'fan') return { label: 'Fan', tone: 'bg-teal-500/20 text-teal-300' };
@@ -86,8 +97,21 @@ export default function RoomCard({
     const [showUnits, setShowUnits] = useState(false);
 
     const active = (houseEnabled && room.enabled) || room.is_boosting;
-    const status = statusOf(room, active);
     const units = room.air_conditioners ?? [];
+
+    // Worth saying on the room card rather than only inside the unit list: it
+    // is the reason the room is not doing what the rest of this card implies,
+    // and it is not obvious that the room's own switch is what undoes it.
+    const byRemote = units.filter((ac) => ac.following_remote);
+
+    // What is actually true, rather than what the room was told. Somebody's own
+    // switching wins over the room's state either way, so the label follows the
+    // hardware and the marker beside it explains why.
+    const effectivelyActive = units.length > 0 && byRemote.length === units.length
+        ? byRemote.some((ac) => ac.manual_power)
+        : active || byRemote.some((ac) => ac.manual_power);
+
+    const status = statusOf(room, effectivelyActive);
     const summary = summariseUnits(units);
     const stale = isStale(room.current_temp_at);
 
@@ -96,10 +120,14 @@ export default function RoomCard({
     // its own return air and reads warm. Worth showing, but quietly: it is not
     // what the room is regulated against. Omitted where the room already reads
     // from the unit, since that would print the same number twice.
-    // Worth saying on the room card rather than only inside the unit list: it
-    // is the reason the room is not doing what the rest of this card implies,
-    // and it is not obvious that the room's own switch is what undoes it.
-    const byRemote = units.filter((ac) => ac.following_remote);
+    // What the buttons below ask for, so the unit's own answer can be compared
+    // against it. Only running units are asked: a Gree that is off still
+    // reports the mode it was last left in, which is not a disagreement.
+    const askedMode = room.mode_override ?? (houseMode === 'heating' ? 'heat' : 'cool');
+    const actualMode = units
+        .filter((ac) => ac.observed_power && ac.observed_state?.mode)
+        .map((ac) => ac.observed_state!.mode!)
+        .find((mode) => mode !== askedMode);
 
     const unitReadings = room.temp_source === 'ac'
         ? []
@@ -138,16 +166,28 @@ export default function RoomCard({
                         {status.label}
                         {room.is_boosting && <span className="opacity-70">· boost</span>}
                     </span>
+
+                    {/* A footnote, not the headline. The state above says what
+                        the room is doing; this only says who asked for it. */}
+                    {byRemote.length > 0 && (
+                        <span className="ml-1.5 inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-xs font-medium text-violet-300">
+                            by remote
+                        </span>
+                    )}
                 </div>
 
                 {/* Runs the room outright: the API also switches the house on
                     and revives any parked unit, so one press is always enough.
                     Switching off releases this room only. */}
+                {/* Follows what is actually happening, not what the room was
+                    told. A unit running because somebody switched it by hand
+                    still needs this button to read "on" and to stop it -- and
+                    running the room clears the override on the way through. */}
                 <button
-                    onClick={() => onRunRoom(room.id, !active)}
+                    onClick={() => onRunRoom(room.id, !effectivelyActive)}
                     disabled={isPending}
-                    aria-label={active ? `Switch ${room.name} off` : `Run ${room.name} now`}
-                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-all active:scale-95 disabled:opacity-50 ${active ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-500'}`}
+                    aria-label={effectivelyActive ? `Switch ${room.name} off` : `Run ${room.name} now`}
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-all active:scale-95 disabled:opacity-50 ${effectivelyActive ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-500'}`}
                 >
                     <PowerSettingsNewIcon sx={{ fontSize: 26 }} />
                 </button>
@@ -211,7 +251,18 @@ export default function RoomCard({
 
             {units.length > 0 && (
                 <div className="mt-4">
-                    <span className="text-[10px] uppercase tracking-wide text-gray-500">Mode</span>
+                    <span className="text-[10px] uppercase tracking-wide text-gray-500">
+                        Mode
+                        {/* The buttons show what was asked for. When the unit is
+                            in something else -- changed at the remote, or a mode
+                            it would not take -- saying so beats letting the
+                            selection quietly misdescribe the hardware. */}
+                        {actualMode && (
+                            <span className="ml-1 normal-case text-violet-300">
+                                unit is in {MODE_LABELS[actualMode] ?? actualMode}
+                            </span>
+                        )}
+                    </span>
                     <div className="mt-1.5 grid grid-cols-3 gap-2">
                         {MODE_CHOICES.map(({ value, label, hint }) => (
                             <button
