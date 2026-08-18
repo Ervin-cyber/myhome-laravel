@@ -40,21 +40,27 @@ those variables, the plug thread never starts and climate control is unaffected.
 Run `python3 check_tapo.py [ip]` on the Pi to diagnose; it reports each stage
 separately.
 
-### Known blocker: TPAP firmware
+### Two failures worth telling apart
 
-Some P110 firmware speaks an encryption scheme python-kasa does not implement:
+**`UnsupportedDeviceError ... encrypt_type='TPAP'`** — the device announced a
+scheme python-kasa does not implement. Nothing about credentials or addressing
+gets past this. The Pi records the address and stops dialling it until the
+service restarts, so it costs only the reading. The `tapo` library implements
+TPAP and is the fallback worth trying; `check_tapo_alt.py` probes it.
 
-```
-UnsupportedDeviceError: Unsupported device ... of type SMART.TAPOPLUG
-with encrypt_scheme EncryptionScheme(..., encrypt_type='TPAP', ...)
-```
+A plug has been observed announcing TPAP on one occasion and KLAP on another,
+so re-adding it in the Tapo app is worth trying before concluding anything.
 
-This is an upstream gap, not a configuration problem — no credentials, address
-or network change gets past it, and 0.10.2 is the newest release as of writing.
-The Pi records such an address and stops dialling it until the service is
-restarted, so it costs nothing but the reading. Retry after upgrading
-python-kasa; if `grep -ril tpap` in the installed package finds nothing, support
-has not landed yet.
+**`AuthenticationError` / `HASH_MISMATCH`** — the handshake completed and the
+device rejected the challenge hash. This is credentials, and it is worth
+confirming with a second library before touching the hardware: if both
+python-kasa and `tapo` say the same thing, the fault is not in either.
+
+Causes, cheapest first: whitespace or case in `.env` (both scripts print the
+loaded length and flag stray spaces); the account password having changed since
+the plug was added; or the plug holding credentials propagated by TP-Link Simple
+Setup from another device on the network rather than the ones for your account.
+The last needs a factory reset with other TP-Link devices powered off.
 
 ## 🚀 Technical Architecture
 

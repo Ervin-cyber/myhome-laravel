@@ -67,6 +67,17 @@ async def main():
         print("\nBoth must be set in .env, or temp.py never starts the plug thread.")
         return
 
+    # Shape only, never the values. A stray space inside the quotes in .env
+    # survives loading and fails the challenge exactly like a wrong password,
+    # which is a miserable thing to go looking for after a factory reset.
+    for label, value in (('email', EMAIL), ('password', PASSWORD)):
+        flags = []
+        if value != value.strip():
+            flags.append('HAS LEADING/TRAILING WHITESPACE')
+        if label == 'email' and value != value.lower():
+            flags.append('not all lower case')
+        print(f"  {label:9} {len(value)} chars  {' '.join(flags)}")
+
     credentials = kasa.Credentials(EMAIL, PASSWORD)
     host = sys.argv[1] if len(sys.argv) > 1 else None
 
