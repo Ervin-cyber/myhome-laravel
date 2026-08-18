@@ -26,19 +26,37 @@ EMAIL = os.getenv('TAPO_EMAIL')
 PASSWORD = os.getenv('TAPO_PASSWORD')
 
 
+def missing(package, exc):
+    """
+    Tell "the package is absent" apart from "its API has moved".
+
+    Reporting the second as the first sends you off to install something that
+    is already there, which is exactly the wrong direction.
+    """
+    import importlib.util
+
+    if importlib.util.find_spec(package) is None:
+        return f'not installed  (pip install {package})'
+
+    return f'INSTALLED but the import failed — its API has moved: {exc}'
+
+
 async def try_tapo(host):
     """mihai-dinculescu/tapo — Rust core with Python bindings."""
     try:
         from tapo import ApiClient
-    except ImportError:
-        return 'not installed  (pip install tapo)'
+    except Exception as exc:
+        return missing('tapo', exc)
 
     client = ApiClient(EMAIL, PASSWORD)
+    attempts = []
 
-    # The P110 and P115 differ only in the accessor used to reach them.
+    # A P110 answers p110(); the others are here in case the plug identifies
+    # as something else. Every failure is reported: they are not all the same.
     for accessor in ('p110', 'p115', 'p100'):
         factory = getattr(client, accessor, None)
         if factory is None:
+            attempts.append(f'{accessor}(): not offered by this version')
             continue
 
         try:
@@ -51,9 +69,9 @@ async def try_tapo(host):
             today = getattr(usage, 'today_energy', None)
             return f'{line}\n        current_power={power!r} (mW)  today_energy={today!r} (Wh)'
         except Exception as exc:
-            last = f'{accessor}() -> {type(exc).__name__}: {exc}'
+            attempts.append(f'{accessor}(): {type(exc).__name__}: {exc}')
 
-    return f'failed  ({last})'
+    return 'failed\n' + '\n'.join(f'        {line}' for line in attempts)
 
 
 async def try_plugp100(host):
@@ -61,8 +79,8 @@ async def try_plugp100(host):
     try:
         from plugp100.common.credentials import AuthCredential
         from plugp100.new.device_factory import DeviceConnectConfiguration, connect
-    except ImportError:
-        return 'not installed  (pip install plugp100)'
+    except Exception as exc:
+        return missing('plugp100', exc)
 
     try:
         device = await connect(DeviceConnectConfiguration(
@@ -89,7 +107,18 @@ async def main():
         print('TAPO_EMAIL and TAPO_PASSWORD must be set in .env.')
         return
 
-    print(f'Asking {host} with each library in turn.\n')
+    # Shape only, never the values. A stray space inside the quotes in .env
+    # survives loading and produces an authentication failure that looks
+    # exactly like a wrong password.
+    for label, value in (('email', EMAIL), ('password', PASSWORD)):
+        flags = []
+        if value != value.strip():
+            flags.append('HAS LEADING/TRAILING WHITESPACE')
+        if label == 'email' and value != value.lower():
+            flags.append('not all lower case')
+        print(f'  {label:9} {len(value)} chars  {" ".join(flags)}')
+
+    print(f'\nAsking {host} with each library in turn.\n')
 
     for name, attempt in (('tapo', try_tapo), ('plugp100', try_plugp100)):
         try:
