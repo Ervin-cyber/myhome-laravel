@@ -129,6 +129,11 @@ ws_app = None
 ac_loop = None
 ac_loop_thread = None
 
+# Metering gets its own loop. See start_plug_loop for why sharing one with the
+# actuators cost the house its cooling.
+plug_loop = None
+plug_loop_thread = None
+
 # Last state actually pushed to each unit, keyed by MAC: (desired, sent_at).
 # Used to skip redundant LAN commands — the broadcast fires on every sensor
 # reading, but a unit only needs a command when what we want from it changes.
@@ -296,12 +301,43 @@ def run_on_ac_loop(coro, timeout=60):
     if ac_loop is None:
         start_ac_loop()
 
-    future = asyncio.run_coroutine_threadsafe(coro, ac_loop)
+    return run_on_loop(ac_loop, coro, timeout, 'AC')
+
+def start_plug_loop():
+    """
+    A second event loop, for metering only.
+
+    Plugs must never share a loop with the actuators. An unreachable Tapo takes
+    timeouts and a rediscovery sweep to give up, and on a shared loop every Gree
+    command queues behind that — including the ones issued from the websocket
+    thread, which then cannot answer a ping and loses the connection that
+    delivers control documents. Metering is a nicety; it is not allowed to cost
+    the house its cooling.
+    """
+    global plug_loop, plug_loop_thread
+
+    if plug_loop is not None:
+        return
+
+    plug_loop = asyncio.new_event_loop()
+    plug_loop_thread = threading.Thread(
+        target=plug_loop.run_forever, name="plug-loop", daemon=True
+    )
+    plug_loop_thread.start()
+
+def run_on_plug_loop(coro, timeout=60):
+    if plug_loop is None:
+        start_plug_loop()
+
+    return run_on_loop(plug_loop, coro, timeout, 'plug')
+
+def run_on_loop(loop, coro, timeout, label):
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
         return future.result(timeout=timeout)
     except Exception as e:
         future.cancel()
-        print(f"AC loop task failed: {type(e).__name__} - {e}")
+        print(f"{label} loop task failed: {type(e).__name__} - {e}")
         return None
 
 def post_plug_sync(plugs):
@@ -586,7 +622,7 @@ def poll_plugs():
 
         return readings
 
-    post_plug_sync(run_on_ac_loop(read_all()) or [])
+    post_plug_sync(run_on_plug_loop(read_all()) or [])
 
 def plug_poller():
     """
@@ -1007,27 +1043,46 @@ def state_reasserter():
 
 def control_watchdog():
     """
-    Fail safe when the API stops talking to us.
+    Fail safe when the API stops answering, and recover when it does again.
 
     The Pi has no autonomy by design, so a dead API, an expired document or a
-    dropped websocket must not leave the boiler running unattended.
+    dropped websocket must not leave the boiler running unattended. But an old
+    document on its own does not mean any of those things — broadcasts are
+    driven by sensor readings, so the API can be perfectly healthy and simply
+    have had nothing to say. Only a document it will not hand over on request
+    is evidence, so this asks before acting, and goes on asking afterwards
+    because nothing else clears a fail-safe in a settled house.
     """
     while True:
         time.sleep(WATCHDOG_INTERVAL)
-
-        if failsafe_tripped:
-            continue
 
         if last_control_at == 0:
             continue
 
         age = time.time() - last_control_at
         expires_at = (last_control or {}).get('expires_at') or 0
+        stale = age > CONTROL_TIMEOUT or (expires_at and time.time() > expires_at)
 
-        if age > CONTROL_TIMEOUT:
-            fail_safe(f"no control document for {int(age)}s")
-        elif expires_at and time.time() > expires_at:
-            fail_safe("control document expired")
+        if not stale and not failsafe_tripped:
+            continue
+
+        # Silence is not evidence that the API is dead. Broadcasts are driven
+        # by sensor readings, so one quiet or flaky ESP looks exactly like a
+        # dead controller from here — and the house lost its cooling for it.
+        # Ask before failing safe, and keep asking afterwards, because a
+        # settled house produces no document change to recover on.
+        control = fetch_control()
+
+        if control:
+            if failsafe_tripped:
+                print("Control document reachable again; resuming.")
+            execute_control(control)
+            continue
+
+        if not failsafe_tripped:
+            reason = ("control document expired" if not age > CONTROL_TIMEOUT
+                      else f"no control document for {int(age)}s")
+            fail_safe(f"{reason} and the API did not answer")
 
 def fetch_control():
     """Pull the current control document, used at startup and after a reconnect."""
@@ -1077,7 +1132,12 @@ def on_message(ws, message):
 
             current = comparable_control(control)
 
-            if current != previous_control_data:
+            # An unchanged document is still news after a fail-safe: the
+            # hardware was forced off underneath it, so it no longer describes
+            # anything. Without this the units stay off for as long as the
+            # house stays settled, which is indefinitely, while the dashboard
+            # goes on showing them running.
+            if current != previous_control_data or failsafe_tripped:
                 execute_control(control)
                 previous_control_data = current
             else:
@@ -1142,6 +1202,7 @@ if __name__ == '__main__':
         threading.Thread(target=state_reasserter, name="state-reasserter", daemon=True).start()
 
         if kasa and TAPO_EMAIL and TAPO_PASSWORD:
+            start_plug_loop()
             threading.Thread(target=plug_poller, name="plug-poller", daemon=True).start()
         elif TAPO_EMAIL and not kasa:
             print("WARNING: TAPO_EMAIL is set but python-kasa is not installed; no metering.")
