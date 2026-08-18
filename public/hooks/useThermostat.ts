@@ -147,8 +147,9 @@ export function useThermostat() {
         // says nothing, because waking every listener for a temperature nobody
         // is looking at is the cost this window exists to avoid.
         const pollInterval = setInterval(() => {
-            // A background tab is nobody watching, and the units are not being
-            // polled on its behalf either, so there is nothing new to collect.
+            // A background tab is nobody watching. The Pi keeps reading the
+            // units on its own account either way, so nothing is missed by not
+            // asking -- whatever it found is waiting when the tab comes back.
             if (document.visibilityState !== 'visible') return;
 
             refreshData();
