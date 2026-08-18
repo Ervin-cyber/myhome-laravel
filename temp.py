@@ -179,11 +179,10 @@ plug_loop_thread = None
 # Used to skip redundant LAN commands — the broadcast fires on every sensor
 # reading, but a unit only needs a command when what we want from it changes.
 last_sent_ac_state = {}
-AC_RESEND_INTERVAL = 600  # re-assert state at least every 10 min, in case of remote-control changes
-
-# How often to offer the units their desired state again. This is not how often
-# a command is sent — needs_command still drops anything already sent within
-# AC_RESEND_INTERVAL — it is only how often that question gets asked at all.
+# How often to check that the units are doing what they were told. This is how
+# often they are *read*, which is silent and cheap. A command only follows when
+# the answer is wrong, because a Gree beeps at every command it accepts and a
+# house doing as it was told should make no noise at all.
 STATE_REASSERT_INTERVAL = 60
 
 # While a dashboard is open the API asks us to interrogate the units directly,
@@ -868,15 +867,20 @@ async def send_gree_command(ac, desired):
              return None
 
 def needs_command(mac, desired):
-    """Skip units already in the desired state, re-asserting periodically."""
+    """
+    Skip units already in the state we last sent them.
+
+    No periodic resend any more. A Gree chirps every time it accepts a command,
+    so a timer that re-sends whether or not anything is wrong is an audible beep
+    in the living room, on a schedule, for nothing. Drift is caught by reading
+    the unit instead -- see units_out_of_step -- which is silent.
+    """
     previous = last_sent_ac_state.get(mac)
+
     if previous is None:
         return True
 
-    prev_desired, sent_at = previous
-
-    if time.time() - sent_at > AC_RESEND_INTERVAL:
-        return True
+    prev_desired, _ = previous
 
     return prev_desired != desired
 
@@ -1083,9 +1087,9 @@ def poll_unit_state():
                 })
 
                 # Someone reached the unit past us — the IR remote, a command
-                # that never landed, a power blip. Dropping the cached desired
-                # state makes the next re-assert tick treat it as unknown and
-                # command it again, rather than waiting out AC_RESEND_INTERVAL.
+                # that never landed, a power blip. Clearing what we last sent
+                # gets it corrected on the next re-assert tick, which reaches
+                # the same conclusion itself but up to a minute later.
                 drift = disagreements(unit, state)
 
                 if drift:
@@ -1109,20 +1113,61 @@ def live_poller():
         if time.time() < live_until:
             poll_unit_state()
 
+def units_out_of_step(units):
+    """
+    Ask each unit what it is doing, and name the ones that are wrong.
+
+    Reading is silent and cheap; commanding is neither. This is the half that
+    can be done as often as we like.
+    """
+    async def check_all():
+        wrong = []
+
+        async with gree_lock:
+            for unit in units:
+                device = GREE_DEVICES.get(unit.get('mac'))
+
+                if not device:
+                    # Never paired, or dropped after a failed command. Command
+                    # it: send_gree_command reconnects, and it plainly is not
+                    # known to be doing the right thing.
+                    wrong.append(unit.get('mac'))
+                    continue
+
+                try:
+                    await asyncio.wait_for(device.update_state(), timeout=LIVE_READ_TIMEOUT)
+                    state = observed_state(device)
+                except Exception as exc:
+                    # Unreachable for a read is unreachable for a command, so
+                    # there is nothing to be gained by shouting at it.
+                    print(f"[{unit.get('ip')}] re-assert check failed: {type(exc).__name__}: {exc}")
+                    continue
+
+                drift = disagreements(unit, state)
+
+                if drift:
+                    print(f"[{unit.get('ip')}] out of step on {', '.join(drift)}. Correcting.")
+                    wrong.append(unit.get('mac'))
+
+        return wrong
+
+    return run_on_ac_loop(check_all()) or []
+
 def state_reasserter():
     """
-    Offer the units their desired state again, on a timer.
+    Put right any unit that is not doing what it was told, and only those.
 
     execute_control only runs when the control document *changes*, so in a
     settled house nothing ever reaches the units — which is exactly when one
     switched off at the handset, or dropped by a brief outage, needs putting
-    back. Without this the AC_RESEND_INTERVAL rule in needs_command is
-    unreachable: a unit could sit off for hours while the dashboard, which
-    records intent rather than observation, went on showing it as running.
+    back. A unit could sit off for hours while the dashboard, which records
+    intent rather than observation, went on showing it as running.
 
-    Cheap by construction. needs_command still drops every unit already in the
-    state we last sent it, so this costs no LAN traffic until the resend
-    interval has actually elapsed.
+    The first version of this re-sent on a timer, which fixed that and put a
+    beep in the living room every ten minutes: a Gree chirps at every command it
+    accepts, and almost all of those commands were telling a unit to carry on
+    doing exactly what it was already doing. So it asks first now, and a house
+    doing as it was told is completely silent.
     """
     while True:
         time.sleep(STATE_REASSERT_INTERVAL)
@@ -1131,7 +1176,18 @@ def state_reasserter():
             continue
 
         try:
-            apply_units(last_control.get('units', []))
+            units = last_control.get('units', [])
+            wrong = set(units_out_of_step(units))
+
+            if not wrong:
+                continue
+
+            for mac in wrong:
+                # Whatever we last sent plainly did not stick, so it is no
+                # longer evidence of anything and must not suppress the resend.
+                last_sent_ac_state.pop(mac, None)
+
+            apply_units([u for u in units if u.get('mac') in wrong])
         except Exception as exc:
             print(f"State re-assert failed: {type(exc).__name__}: {exc}")
 
