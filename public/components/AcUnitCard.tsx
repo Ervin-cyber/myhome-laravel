@@ -35,9 +35,12 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
     const drifted = ac.observed_power !== null && ac.observed_power !== ac.power_on;
 
     // Following the remote is not a fault and must not be dressed as one: the
-    // unit is doing what somebody asked, and the system has agreed to let it.
+    // unit is doing what somebody asked and the system has agreed to let it, so
+    // it reads as plain state and the marker beside it says who asked.
     const status = ac.following_remote
-        ? { label: ac.manual_power ? 'On by remote' : 'Off by remote', tone: 'bg-violet-500/20 text-violet-300' }
+        ? ac.manual_power
+            ? { label: 'Running', tone: 'bg-blue-500/20 text-blue-300' }
+            : { label: 'Off', tone: 'bg-gray-700/50 text-gray-400' }
         : drifted
             ? { label: ac.observed_power ? 'On at the unit' : 'Off at the unit', tone: 'bg-amber-500/20 text-amber-300' }
             : running
@@ -96,12 +99,22 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                     and three identical power glyphs meaning three different
                     things was the whole problem. `enabled` is still enforced by
                     the API; the room's own switch is what revives a parked unit. */}
-                <span
-                    title={drifted ? 'The unit disagrees with what it was told. It will be commanded again shortly.' : undefined}
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${status.tone}`}
-                >
-                    {status.label}
-                </span>
+                <div className="flex shrink-0 items-center gap-1">
+                    <span
+                        title={drifted ? 'The unit disagrees with what it was told. It will be commanded again shortly.' : undefined}
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${status.tone}`}
+                    >
+                        {status.label}
+                    </span>
+                    {ac.following_remote && (
+                        <span
+                            title="Switched here rather than in the app. Left alone until you use the controls in this room."
+                            className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-300"
+                        >
+                            remote
+                        </span>
+                    )}
+                </div>
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2">

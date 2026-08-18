@@ -190,6 +190,16 @@ last_observed_ac_state = {}
 # How long a reading is trusted to still describe the unit. Both readers run at
 # least this often, so in practice one is nearly always in hand.
 OBSERVATION_TRUSTED_SECONDS = 90
+
+# Settings a unit has refused often enough that we stop asking, keyed by MAC.
+#
+# A Gree reports settings it is not currently honouring, and a correction that
+# can never converge is an audible beep every minute for as long as the house
+# is powered. Giving up is the only safe default: being briefly wrong about a
+# swing angle costs nothing, and being loudly wrong forever costs sleep.
+unconvergeable = {}
+correction_attempts = {}
+CORRECTION_LIMIT = 3
 # How often to check that the units are doing what they were told. This is how
 # often they are *read*, which is silent and cheap. A command only follows when
 # the answer is wrong, because a Gree beeps at every command it accepts and a
@@ -944,6 +954,14 @@ def apply_units(units):
 
             desired = desired_state(unit)
 
+            previous = last_sent_ac_state.get(mac)
+
+            if previous and previous[0] != desired:
+                # New intent from the dashboard, so anything this unit refused
+                # under the old one is worth trying once more -- a setting it
+                # would not take in fan mode may well take in cool.
+                unconvergeable.pop(mac, None)
+
             if not needs_command(unit, desired):
                 continue
 
@@ -1064,8 +1082,10 @@ def disagreements(unit, state):
         ('swing_h', unit.get('swing_h'), state.get('swing_h')),
     ]
 
-    # The unit picks its own speed under either of these and reports that.
-    if not (unit.get('quiet') or unit.get('turbo')):
+    # The unit picks its own speed under quiet or turbo and reports that. It
+    # also picks its own under 'auto', which is what asking for auto *means* --
+    # a concrete speed coming back is the unit complying, not defying.
+    if not (unit.get('quiet') or unit.get('turbo') or unit.get('fan_speed') == 'auto'):
         checks.append(('fan_speed', unit.get('fan_speed'), state.get('fan_speed')))
 
     # Ignored in fan mode, and the unit says so by reporting something else.
@@ -1073,8 +1093,46 @@ def disagreements(unit, state):
         checks.append(('target_temp', unit.get('target_temp'), state.get('target_temp')))
 
     # A None on the unit's side means "no word for what it said", which is not
-    # evidence of disagreement.
-    return [name for name, ours, theirs in checks if theirs is not None and ours != theirs]
+    # evidence of disagreement. Anything this unit has already proved it will
+    # not accept is left alone -- see note_corrections.
+    ignored = unconvergeable.get(unit.get('mac'), set())
+
+    return [
+        name for name, ours, theirs in checks
+        if name not in ignored and theirs is not None and ours != theirs
+    ]
+
+def note_corrections(mac, drift):
+    """
+    Give up on a setting this unit will not take.
+
+    Some Gree settings are reported but not honoured, and which ones depends on
+    the mode and the model. A correction that never converges is a command every
+    minute and a beep with it, which is the exact fault the read-before-command
+    change was meant to end -- it only moved it from a timer to a disagreement
+    that cannot be resolved.
+
+    So each field gets a few attempts, and is then dropped and said once, out
+    loud, in the log and in a notification. That turns an endless beep into a
+    line naming the field, which is what gets it excluded properly.
+    """
+    for key in [k for k in correction_attempts if k[0] == mac and k[1] not in drift]:
+        # It took. Whatever it needed, it has had.
+        correction_attempts.pop(key, None)
+
+    for field in drift:
+        key = (mac, field)
+        correction_attempts[key] = correction_attempts.get(key, 0) + 1
+
+        if correction_attempts[key] < CORRECTION_LIMIT:
+            continue
+
+        unconvergeable.setdefault(mac, set()).add(field)
+        correction_attempts.pop(key, None)
+
+        message = f"{mac} will not accept '{field}'; leaving that setting alone"
+        print(f"WARNING: {message}")
+        send_ntfy_alert(message, "warning", key=f"unconvergeable_{mac}_{field}")
 
 def manual_power_change(unit, state):
     """
@@ -1276,6 +1334,12 @@ def units_out_of_step(units):
 
                 observed.append(entry)
 
+                drift = disagreements(unit, state)
+                note_corrections(unit['mac'], drift)
+
+                # note_corrections may have just given up on the only field that
+                # was wrong, so ask again rather than commanding for something
+                # we have already decided to stop chasing.
                 drift = disagreements(unit, state)
 
                 if drift:
