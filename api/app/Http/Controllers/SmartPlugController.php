@@ -13,7 +13,11 @@ class SmartPlugController extends Controller
 
     public function index()
     {
-        return response()->json(SmartPlug::orderBy('id')->get());
+        return response()->json(
+            SmartPlug::orderBy('id')->get()
+                ->filter(fn (SmartPlug $plug) => $this->isAllowedMac($plug->mac, 'climate.plug_macs'))
+                ->values()
+        );
     }
 
     /**
@@ -39,6 +43,14 @@ class SmartPlugController extends Controller
         $changed = false;
 
         foreach ($payload['plugs'] as $reported) {
+            // Everything on the TP-Link account answers, including plugs that
+            // meter a desk rather than a compressor. Dropping them here keeps
+            // them out of the table entirely rather than storing readings
+            // nothing will ever display.
+            if (! $this->isAllowedMac($reported['mac'], 'climate.plug_macs')) {
+                continue;
+            }
+
             $plug = SmartPlug::firstOrNew(['mac' => $reported['mac']]);
 
             $plug->ip = $reported['ip'] ?? $plug->ip;

@@ -286,6 +286,11 @@ class ClimateService
             'swing_h' => $ac->swing_horizontal,
             // Gree dries its own coil after cooling; we only set the flag.
             'xfan' => (bool) $ac->xfan,
+            // Sent even when false. Both override fan_speed at the unit, so
+            // leaving them unwritten lets one set from the handset pin the fan
+            // indefinitely — which is exactly what it did.
+            'quiet' => (bool) $ac->quiet,
+            'turbo' => (bool) $ac->turbo,
         ];
     }
 

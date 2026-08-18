@@ -34,6 +34,9 @@ class AirConditionerController extends Controller
             'devices.*.ip' => 'required|ip',
             'devices.*.port' => 'nullable|integer|between:1,65535',
             'devices.*.reported_temp' => 'nullable|numeric|between:-20,60',
+            // Sent only by the live poller, which reads the unit without
+            // commanding it. Absent from a discovery sync, hence nullable.
+            'devices.*.reported_power' => 'nullable|boolean',
         ]);
 
         $seenIds = [];
@@ -49,6 +52,15 @@ class AirConditionerController extends Controller
             if (array_key_exists('reported_temp', $device) && $device['reported_temp'] !== null) {
                 $ac->reported_temp = $device['reported_temp'];
                 $ac->reported_at = now();
+            }
+
+            // Deliberately not folded into the $changed check below: what the
+            // unit is doing is for the dashboard to read on its next poll, and
+            // broadcasting it would put the Pi's own observation back on the
+            // channel the Pi diffs.
+            if (array_key_exists('reported_power', $device) && $device['reported_power'] !== null) {
+                $ac->observed_power_on = (bool) $device['reported_power'];
+                $ac->observed_at = now();
             }
 
             // Only seed the name on first discovery, so a rename in the UI sticks.
@@ -109,9 +121,22 @@ class AirConditionerController extends Controller
             'swing_vertical' => ['sometimes', Rule::in(AirConditioner::SWING_VERTICAL)],
             'swing_horizontal' => ['sometimes', Rule::in(AirConditioner::SWING_HORIZONTAL)],
             'xfan' => 'sometimes|boolean',
+            'quiet' => 'sometimes|boolean',
+            'turbo' => 'sometimes|boolean',
         ]);
 
         $ac->fill($data);
+
+        // The unit cannot hold both, so switching one on releases the other
+        // here rather than leaving the pair to be resolved by whichever
+        // property greeclimate happens to write last.
+        if (! empty($data['quiet'])) {
+            $ac->turbo = false;
+        }
+
+        if (! empty($data['turbo'])) {
+            $ac->quiet = false;
+        }
 
         if (! $ac->isDirty()) {
             return response()->json($ac);

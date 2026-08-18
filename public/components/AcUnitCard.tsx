@@ -4,7 +4,6 @@ import { JSX } from 'react';
 import { AirConditioner, FAN_SPEEDS, FanSpeed, SWING_HORIZONTAL, SWING_VERTICAL, SwingHorizontal, SwingVertical } from '@/types/types';
 import { formatAge, isStale } from '@/lib/utils';
 import ACUnitIcon from './ACUnitIcon';
-import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 interface Props {
     ac: AirConditioner;
@@ -14,9 +13,40 @@ interface Props {
 
 const selectClass = 'min-h-[2.75rem] w-full rounded-lg bg-gray-900/60 px-2 text-sm text-white border border-gray-700/60 disabled:opacity-50';
 
+/**
+ * Quiet and turbo are one setting at the unit, not two flags: it holds at most
+ * one of them, and either overrides the fan speed. Presenting them as a single
+ * three-way choice is the only shape that cannot express a state the hardware
+ * refuses.
+ */
+const FAN_PROFILES = [
+    { key: 'normal', label: 'Normal', body: { quiet: false, turbo: false } },
+    { key: 'quiet', label: 'Quiet', body: { quiet: true, turbo: false } },
+    { key: 'turbo', label: 'Turbo', body: { quiet: false, turbo: true } },
+] as const;
+
 export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Element {
     const running = ac.online && ac.power_on;
     const stale = isStale(ac.reported_at);
+
+    // Everything else on this card is what we asked for. This is what the unit
+    // answered, and the two parting company is how a command lost to the IR
+    // remote or a dropped packet finally becomes visible.
+    const drifted = ac.observed_power !== null && ac.observed_power !== ac.power_on;
+
+    const status = drifted
+        ? { label: ac.observed_power ? 'On at the unit' : 'Off at the unit', tone: 'bg-amber-500/20 text-amber-300' }
+        : running
+            ? { label: 'Running', tone: 'bg-blue-500/20 text-blue-300' }
+            : ac.enabled
+                ? { label: 'Idle', tone: 'bg-gray-700/50 text-gray-400' }
+                : { label: 'Parked', tone: 'bg-amber-500/20 text-amber-300' };
+
+    const profile = ac.turbo ? 'turbo' : ac.quiet ? 'quiet' : 'normal';
+
+    // The unit decides its own speed under either, and silently drops whatever
+    // we send. Better to say so than to offer a control that does nothing.
+    const fanSpeedLocked = ac.quiet || ac.turbo;
 
     return (
         <div className={`rounded-xl border border-gray-700/50 bg-gray-900/40 p-3 ${ac.online ? '' : 'opacity-60'}`}>
@@ -41,23 +71,27 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                     </div>
                 </div>
 
-                <button
-                    onClick={() => onUpdate(ac.id, { enabled: !ac.enabled })}
-                    disabled={isPending || !ac.online}
-                    aria-label={ac.enabled ? `Disable ${ac.name}` : `Enable ${ac.name}`}
-                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-all active:scale-95 disabled:opacity-50 ${ac.enabled ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-500'}`}
+                {/* Status, not a control. A unit in a room is part of that room,
+                    and three identical power glyphs meaning three different
+                    things was the whole problem. `enabled` is still enforced by
+                    the API; the room's own switch is what revives a parked unit. */}
+                <span
+                    title={drifted ? 'The unit disagrees with what it was told. It will be commanded again shortly.' : undefined}
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${status.tone}`}
                 >
-                    <PowerSettingsNewIcon sx={{ fontSize: 20 }} />
-                </button>
+                    {status.label}
+                </span>
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wide text-gray-500">Fan</span>
+                    <span className="text-[10px] uppercase tracking-wide text-gray-500">
+                        Fan{fanSpeedLocked && <span className="ml-1 normal-case text-amber-500/80">set by {profile}</span>}
+                    </span>
                     <select
                         value={ac.fan_speed}
                         onChange={(e) => onUpdate(ac.id, { fan_speed: e.target.value as FanSpeed })}
-                        disabled={isPending || !ac.online}
+                        disabled={isPending || !ac.online || fanSpeedLocked}
                         aria-label={`Fan speed for ${ac.name}`}
                         className={selectClass}
                     >
@@ -109,6 +143,25 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                         {ac.xfan ? 'X-Fan on' : 'X-Fan off'}
                     </button>
                 </label>
+            </div>
+
+            <div className="mt-2">
+                <span className="text-[10px] uppercase tracking-wide text-gray-500">Fan profile</span>
+                <div className="mt-1 grid grid-cols-3 gap-2">
+                    {FAN_PROFILES.map(({ key, label, body }) => (
+                        <button
+                            key={key}
+                            onClick={() => onUpdate(ac.id, body)}
+                            disabled={isPending || !ac.online}
+                            aria-pressed={profile === key}
+                            className={`min-h-[2.75rem] rounded-lg border text-sm transition-all active:scale-95 disabled:opacity-50 ${profile === key
+                                ? 'border-blue-500/50 bg-blue-500/20 text-blue-300'
+                                : 'border-gray-700/60 bg-gray-900/60 text-gray-500 hover:bg-gray-700/40'}`}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
             </div>
 
             {!ac.online && (

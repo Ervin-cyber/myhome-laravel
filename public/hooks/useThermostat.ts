@@ -261,6 +261,43 @@ export function useThermostat() {
         [queueWrite]
     );
 
+    /**
+     * Run a room, or release it.
+     *
+     * Not a queued write: switching on can also switch the house on and revive
+     * parked units, so the server decides the whole outcome and we take what it
+     * returns. Optimistically flipping the room here would show it running
+     * before we know the rest of the house agreed.
+     */
+    const runRoom = useCallback(async (roomId: number, on: boolean) => {
+        setPendingRoomIds(prev => (prev.includes(roomId) ? prev : [...prev, roomId]));
+
+        try {
+            const res = await fetchClient(`${ENDPOINTS.room}/${roomId}/run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ on }),
+            });
+            if (!res.ok) throw new Error('Request rejected');
+
+            const saved = await res.json();
+
+            setData(prev => ({
+                ...prev,
+                rooms: prev.rooms.map(room => (room.id === roomId ? saved : room)),
+                // The house may have come on to satisfy this, and the header
+                // has to say so rather than waiting for the next poll.
+                enabled: on ? true : prev.enabled,
+            }));
+        } catch (error) {
+            console.error(error);
+            showNotification(on ? 'Could not start the room' : 'Could not stop the room', 'error');
+            refreshData();
+        } finally {
+            setPendingRoomIds(prev => prev.filter(pending => pending !== roomId));
+        }
+    }, [fetchClient, showNotification, refreshData]);
+
     const saveState = async (val: number, until: number) => {
         if (val < 10 || until < 0) return;
         const mode = data.mode;
@@ -342,6 +379,7 @@ export function useThermostat() {
         changeMode,
         togglePower,
         updateAcState,
-        updateRoomState
+        updateRoomState,
+        runRoom
     };
 }
