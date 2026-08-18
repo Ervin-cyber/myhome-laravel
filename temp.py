@@ -191,20 +191,11 @@ last_observed_ac_state = {}
 # least this often, so in practice one is nearly always in hand.
 OBSERVATION_TRUSTED_SECONDS = 90
 
-# Settings a unit has refused often enough that we stop asking, keyed by MAC.
-#
-# A Gree reports settings it is not currently honouring, and a correction that
-# can never converge is an audible beep every minute for as long as the house
-# is powered. Giving up is the only safe default: being briefly wrong about a
-# swing angle costs nothing, and being loudly wrong forever costs sleep.
-unconvergeable = {}
-correction_attempts = {}
-CORRECTION_LIMIT = 3
-# How often to check that the units are doing what they were told. This is how
-# often they are *read*, which is silent and cheap. A command only follows when
-# the answer is wrong, because a Gree beeps at every command it accepts and a
-# house doing as it was told should make no noise at all.
-STATE_REASSERT_INTERVAL = 60
+# How often the units are read, so the dashboard knows what they are doing even
+# with nobody watching. Reading only: nothing is commanded on a timer, because a
+# Gree beeps at every command it accepts and a house nobody is talking to should
+# make no noise at all.
+OBSERVE_INTERVAL = 60
 
 # While a dashboard is open the API asks us to interrogate the units directly,
 # so the page shows what they actually report rather than what we last told
@@ -954,14 +945,6 @@ def apply_units(units):
 
             desired = desired_state(unit)
 
-            previous = last_sent_ac_state.get(mac)
-
-            if previous and previous[0] != desired:
-                # New intent from the dashboard, so anything this unit refused
-                # under the old one is worth trying once more -- a setting it
-                # would not take in fan mode may well take in cool.
-                unconvergeable.pop(mac, None)
-
             if not needs_command(unit, desired):
                 continue
 
@@ -1093,46 +1076,8 @@ def disagreements(unit, state):
         checks.append(('target_temp', unit.get('target_temp'), state.get('target_temp')))
 
     # A None on the unit's side means "no word for what it said", which is not
-    # evidence of disagreement. Anything this unit has already proved it will
-    # not accept is left alone -- see note_corrections.
-    ignored = unconvergeable.get(unit.get('mac'), set())
-
-    return [
-        name for name, ours, theirs in checks
-        if name not in ignored and theirs is not None and ours != theirs
-    ]
-
-def note_corrections(mac, drift):
-    """
-    Give up on a setting this unit will not take.
-
-    Some Gree settings are reported but not honoured, and which ones depends on
-    the mode and the model. A correction that never converges is a command every
-    minute and a beep with it, which is the exact fault the read-before-command
-    change was meant to end -- it only moved it from a timer to a disagreement
-    that cannot be resolved.
-
-    So each field gets a few attempts, and is then dropped and said once, out
-    loud, in the log and in a notification. That turns an endless beep into a
-    line naming the field, which is what gets it excluded properly.
-    """
-    for key in [k for k in correction_attempts if k[0] == mac and k[1] not in drift]:
-        # It took. Whatever it needed, it has had.
-        correction_attempts.pop(key, None)
-
-    for field in drift:
-        key = (mac, field)
-        correction_attempts[key] = correction_attempts.get(key, 0) + 1
-
-        if correction_attempts[key] < CORRECTION_LIMIT:
-            continue
-
-        unconvergeable.setdefault(mac, set()).add(field)
-        correction_attempts.pop(key, None)
-
-        message = f"{mac} will not accept '{field}'; leaving that setting alone"
-        print(f"WARNING: {message}")
-        send_ntfy_alert(message, "warning", key=f"unconvergeable_{mac}_{field}")
+    # evidence of disagreement.
+    return [name for name, ours, theirs in checks if theirs is not None and ours != theirs]
 
 def manual_power_change(unit, state):
     """
@@ -1240,14 +1185,14 @@ def poll_unit_state():
 
                 observed.append(entry)
 
-                # Something else moved it — a command that never landed, a power
-                # blip. Nothing to clear: the observation recorded above is what
-                # needs_command reads, so the next re-assert tick reaches this
-                # same conclusion from the same evidence and puts it right.
+                # A command that never landed, or a setting the unit declined.
+                # Reported and not acted on: the card shows it as not applied
+                # and you can ask again, which is a decision for whoever is
+                # looking rather than for a loop that cannot tell the two apart.
                 drift = disagreements(unit, state)
 
                 if drift:
-                    print(f"[{unit.get('ip')}] drifted on {', '.join(drift)}.")
+                    print(f"[{unit.get('ip')}] not holding {', '.join(drift)}.")
 
         return observed
 
@@ -1266,20 +1211,17 @@ def live_poller():
         if time.time() < live_until:
             poll_unit_state()
 
-def units_out_of_step(units):
+def observe_units(units):
     """
-    Ask each unit what it is doing. Name the ones that are wrong, and report
-    what they all said.
+    Ask each unit what it is doing, and report what they said.
 
-    Reading is silent and cheap; commanding is neither. This is the half that
-    can be done as often as we like — and unlike the live poll it runs whether
-    or not anybody is watching, so it is also what keeps the dashboard honest
-    about a house nobody currently has open.
-
-    Returns (macs needing a command, observations to report).
+    Reads only. Nothing here commands anything: a unit that did not take a
+    command is not made to take it by being told again, and this used to try,
+    which is how the living room ended up beeping once a minute. What it is for
+    is knowing -- and unlike the live poll it runs whether or not anybody is
+    watching, so the dashboard stays honest about a house nobody has open.
     """
     async def check_all():
-        wrong = []
         observed = []
 
         async with gree_lock:
@@ -1287,10 +1229,6 @@ def units_out_of_step(units):
                 device = GREE_DEVICES.get(unit.get('mac'))
 
                 if not device:
-                    # Never paired, or dropped after a failed command. Command
-                    # it: send_gree_command reconnects, and it plainly is not
-                    # known to be doing the right thing.
-                    wrong.append(unit.get('mac'))
                     continue
 
                 try:
@@ -1298,9 +1236,7 @@ def units_out_of_step(units):
                     state = observed_state(device)
                     temperature = device.current_temperature
                 except Exception as exc:
-                    # Unreachable for a read is unreachable for a command, so
-                    # there is nothing to be gained by shouting at it.
-                    print(f"[{unit.get('ip')}] re-assert check failed: {type(exc).__name__}: {exc}")
+                    print(f"[{unit.get('ip')}] read failed: {type(exc).__name__}: {exc}")
                     continue
 
                 entry = {
@@ -1324,74 +1260,49 @@ def units_out_of_step(units):
                     entry['manual_power'] = manual
                     observed.append(entry)
 
-                    # Nothing more to record. The document that comes back will
-                    # say the same thing, and needs_command reads that against
-                    # the observation just taken -- which already agrees -- so
-                    # no command follows and nothing beeps.
-                    # Deliberately not added to `wrong`. This is the whole
-                    # point: a person's own switching is not a fault to correct.
                     continue
 
                 observed.append(entry)
 
-                drift = disagreements(unit, state)
-                note_corrections(unit['mac'], drift)
-
-                # note_corrections may have just given up on the only field that
-                # was wrong, so ask again rather than commanding for something
-                # we have already decided to stop chasing.
+                # Said, not acted on. The dashboard shows it as not applied and
+                # you can ask again; re-sending on our own would be telling a
+                # unit something it has already declined to hear.
                 drift = disagreements(unit, state)
 
                 if drift:
-                    print(f"[{unit.get('ip')}] out of step on {', '.join(drift)}. Correcting.")
-                    wrong.append(unit.get('mac'))
+                    print(f"[{unit.get('ip')}] not holding {', '.join(drift)}.")
 
-        return wrong, observed
+        return observed
 
-    return run_on_ac_loop(check_all()) or ([], [])
+    return run_on_ac_loop(check_all()) or []
 
-def state_reasserter():
+def unit_observer():
     """
-    Put right any unit that is not doing what it was told, and only those.
+    Keep track of what the units are actually doing.
 
-    execute_control only runs when the control document *changes*, so in a
-    settled house nothing ever reaches the units — which is exactly when one
-    switched off at the handset, or dropped by a brief outage, needs putting
-    back. A unit could sit off for hours while the dashboard, which records
-    intent rather than observation, went on showing it as running.
+    The original problem was a unit sitting off for hours while the dashboard
+    showed it running. That is a knowing problem, not a commanding one, and it
+    is solved by looking: a unit switched off by hand becomes the API's intent
+    within the minute, and the card says so, whether or not anybody has the page
+    open.
 
-    The first version of this re-sent on a timer, which fixed that and put a
-    beep in the living room every ten minutes: a Gree chirps at every command it
-    accepts, and almost all of those commands were telling a unit to carry on
-    doing exactly what it was already doing. So it asks first now, and a house
-    doing as it was told is completely silent.
+    Every attempt to also *fix* things from here made it worse. A timer that
+    re-sent produced a beep every ten minutes; reading first and correcting only
+    real differences produced a beep every minute for a setting the unit was
+    never going to accept. Commands now go out only when the dashboard asks for
+    something new, which is the one moment somebody actually wants the unit
+    spoken to.
     """
     while True:
-        time.sleep(STATE_REASSERT_INTERVAL)
+        time.sleep(OBSERVE_INTERVAL)
 
         if failsafe_tripped or not last_control:
             continue
 
         try:
-            units = last_control.get('units', [])
-            stale, observed = units_out_of_step(units)
-            wrong = set(stale)
-
-            # Reported whether or not anything needs correcting, so the
-            # dashboard reflects the units even with nobody watching -- and so
-            # a unit switched off by hand becomes the API's intent promptly
-            # rather than waiting for someone to open the page.
-            post_ac_sync(observed)
-
-            if not wrong:
-                continue
-
-            # No cache to clear first. needs_command reads the observations just
-            # taken, which are what identified these units in the first place,
-            # so it agrees that each of them needs saying.
-            apply_units([u for u in units if u.get('mac') in wrong])
+            post_ac_sync(observe_units(last_control.get('units', [])))
         except Exception as exc:
-            print(f"State re-assert failed: {type(exc).__name__}: {exc}")
+            print(f"Unit observation failed: {type(exc).__name__}: {exc}")
 
 def control_watchdog():
     """
@@ -1551,7 +1462,7 @@ if __name__ == '__main__':
         report_unmapped_settings()
         threading.Thread(target=control_watchdog, name="control-watchdog", daemon=True).start()
         threading.Thread(target=live_poller, name="live-poller", daemon=True).start()
-        threading.Thread(target=state_reasserter, name="state-reasserter", daemon=True).start()
+        threading.Thread(target=unit_observer, name="unit-observer", daemon=True).start()
 
         if kasa and TAPO_EMAIL and TAPO_PASSWORD:
             start_plug_loop()
