@@ -34,13 +34,17 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
     // remote or a dropped packet finally becomes visible.
     const drifted = ac.observed_power !== null && ac.observed_power !== ac.power_on;
 
-    const status = drifted
-        ? { label: ac.observed_power ? 'On at the unit' : 'Off at the unit', tone: 'bg-amber-500/20 text-amber-300' }
-        : running
-            ? { label: 'Running', tone: 'bg-blue-500/20 text-blue-300' }
-            : ac.enabled
-                ? { label: 'Idle', tone: 'bg-gray-700/50 text-gray-400' }
-                : { label: 'Parked', tone: 'bg-amber-500/20 text-amber-300' };
+    // Following the remote is not a fault and must not be dressed as one: the
+    // unit is doing what somebody asked, and the system has agreed to let it.
+    const status = ac.following_remote
+        ? { label: ac.manual_power ? 'On by remote' : 'Off by remote', tone: 'bg-violet-500/20 text-violet-300' }
+        : drifted
+            ? { label: ac.observed_power ? 'On at the unit' : 'Off at the unit', tone: 'bg-amber-500/20 text-amber-300' }
+            : running
+                ? { label: 'Running', tone: 'bg-blue-500/20 text-blue-300' }
+                : ac.enabled
+                    ? { label: 'Idle', tone: 'bg-gray-700/50 text-gray-400' }
+                    : { label: 'Parked', tone: 'bg-amber-500/20 text-amber-300' };
 
     const profile = ac.turbo ? 'turbo' : ac.quiet ? 'quiet' : 'normal';
 

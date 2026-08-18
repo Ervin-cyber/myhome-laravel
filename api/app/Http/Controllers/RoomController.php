@@ -90,6 +90,14 @@ class RoomController extends Controller
             $room->airConditioners()->where('enabled', false)->update(['enabled' => true]);
         }
 
+        // Either way, this room is being driven from the app again, so a unit
+        // somebody had switched by hand stops overriding the loop. Without
+        // this, pressing the room on would do nothing to a unit switched off at
+        // the handset -- which is precisely the confusion the manual override
+        // was added to prevent, arriving from the other side.
+        $room->airConditioners()->whereNotNull('manual_power')
+            ->update(['manual_power' => null, 'manual_since' => null]);
+
         event(new LiveReadingCreated(null));
 
         return response()->json($room->fresh('airConditioners'));
@@ -118,6 +126,14 @@ class RoomController extends Controller
 
         if (! $room->isDirty()) {
             return response()->json($room->fresh('airConditioners'));
+        }
+
+        // Driving the room from the app takes it back off the handset. Only for
+        // the fields that are actually instructions to the hardware -- renaming
+        // a room or trimming its sensor calibration is not one.
+        if ($room->isDirty(['enabled', 'hvac_until', 'mode_override', 'target_temp'])) {
+            $room->airConditioners()->whereNotNull('manual_power')
+                ->update(['manual_power' => null, 'manual_since' => null]);
         }
 
         $room->save();

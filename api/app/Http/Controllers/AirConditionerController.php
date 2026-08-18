@@ -37,6 +37,10 @@ class AirConditionerController extends Controller
             // Sent only by the live poller, which reads the unit without
             // commanding it. Absent from a discovery sync, hence nullable.
             'devices.*.reported_state' => 'nullable|array',
+            // Sent only when the Pi has concluded a person switched this unit
+            // themselves. Absent on every other sync, which is why it is
+            // nullable rather than defaulted.
+            'devices.*.manual_power' => 'nullable|boolean',
         ]);
 
         $seenIds = [];
@@ -61,6 +65,18 @@ class AirConditionerController extends Controller
             if (! empty($device['reported_state'])) {
                 $ac->observed_state = $this->knownObservationKeys($device['reported_state']);
                 $ac->observed_at = now();
+            }
+
+            // Unlike the observation, this changes what the unit is *for*, so
+            // it has to reach the Pi: the control document is what stops the
+            // re-assert switching the unit straight back.
+            if (array_key_exists('manual_power', $device) && $device['manual_power'] !== null) {
+                if ($ac->manual_power !== (bool) $device['manual_power']) {
+                    $changed = true;
+                }
+
+                $ac->manual_power = (bool) $device['manual_power'];
+                $ac->manual_since = now();
             }
 
             // Only seed the name on first discovery, so a rename in the UI sticks.
@@ -168,6 +184,12 @@ class AirConditionerController extends Controller
         if ($ac->isDirty(['fan_speed', 'swing_vertical', 'swing_horizontal', 'xfan', 'quiet', 'turbo'])) {
             $ac->settings_changed_at = now();
         }
+
+        // Touching this unit in the app is the gesture that asks for automatic
+        // control back. Requiring a separate button for it would leave people
+        // pressing things and watching nothing happen.
+        $ac->manual_power = null;
+        $ac->manual_since = null;
 
         $ac->save();
 

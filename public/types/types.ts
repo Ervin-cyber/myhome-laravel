@@ -125,6 +125,13 @@ export interface AirConditioner {
     divergence: Partial<Record<SettableField, string | number | boolean>>;
     /** False while a command may still be in flight; true once it counts as a fault. */
     divergence_settled: boolean;
+    /**
+     * True while somebody's own switching — handset or the Gree app — outranks
+     * the thermostat for this unit. Cleared by any deliberate action in the app.
+     */
+    following_remote: boolean;
+    manual_power: boolean | null;
+    manual_since: string | null;
     fan_speed: FanSpeed;
     swing_vertical: SwingVertical;
     swing_horizontal: SwingHorizontal;

@@ -203,7 +203,12 @@ class ClimateService
         return $room->airConditioners
             ->map(fn (AirConditioner $ac) => $this->unitCommand(
                 $ac,
-                power: $ac->enabled && $power,
+                // A person at the handset outranks the thermostat. Switching a
+                // unit off by hand and having the house switch it back on a
+                // minute later is not a control loop, it is an argument. Held
+                // until somebody uses the app, which is the same gesture as
+                // asking for automatic control back.
+                power: $ac->manual_power ?? ($ac->enabled && $power),
                 mode: $unitMode,
                 // The room owns the setpoint; every unit in it shares one target.
                 target: (float) $room->target_temp,
@@ -267,7 +272,10 @@ class ClimateService
     private function unitCommand(AirConditioner $ac, bool $power, string $mode, float $target): array
     {
         // Fan mode never starts the compressor, so it is not held back by it.
-        if ($power && $mode !== 'fan' && $this->isCoolingDown($ac)) {
+        // Nor is a unit somebody has just switched on themselves: the guard
+        // exists to stop us short-cycling a compressor, not to overrule a
+        // person standing in front of it with a remote.
+        if ($power && $mode !== 'fan' && ! $ac->following_remote && $this->isCoolingDown($ac)) {
             $power = false;
         }
 

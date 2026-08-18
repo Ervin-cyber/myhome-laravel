@@ -41,6 +41,13 @@ class SystemStateController extends Controller
         $state = SystemState::firstOrCreate();
         $oldState = $state->replicate();
 
+        // Switching the house, or turning the season around, is as deliberate
+        // as an instruction gets, and it takes every unit back off the handset.
+        if (isset($data['enabled']) || isset($data['mode'])) {
+            AirConditioner::whereNotNull('manual_power')
+                ->update(['manual_power' => null, 'manual_since' => null]);
+        }
+
         if (isset($data['enabled'])) {
             $state->enabled = $data['enabled'];
         }

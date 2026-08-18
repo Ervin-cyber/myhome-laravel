@@ -34,6 +34,8 @@ class AirConditioner extends Model
         'observed_state',
         'observed_at',
         'settings_changed_at',
+        'manual_power',
+        'manual_since',
     ];
 
     /**
@@ -94,13 +96,38 @@ class AirConditioner extends Model
         'observed_state' => 'array',
         'observed_at' => 'datetime',
         'settings_changed_at' => 'datetime',
+        'manual_power' => 'boolean',
+        'manual_since' => 'datetime',
     ];
 
-    protected $appends = ['calibrated_temp', 'observed_power', 'divergence', 'divergence_settled'];
+    protected $appends = ['calibrated_temp', 'observed_power', 'divergence', 'divergence_settled', 'following_remote'];
 
     public function room(): BelongsTo
     {
         return $this->belongsTo(Room::class);
+    }
+
+    /** Whether a person's own switching currently outranks the control loop. */
+    public function getFollowingRemoteAttribute(): bool
+    {
+        return $this->manual_power !== null;
+    }
+
+    /**
+     * Hand this unit back to automatic control.
+     *
+     * Called for any deliberate action in the app on this unit or its room:
+     * using the dashboard is the same gesture as asking for control back, and
+     * making it a separate step would leave people wondering why their press
+     * did nothing.
+     */
+    public function resumeAutomatic(): void
+    {
+        if ($this->manual_power === null) {
+            return;
+        }
+
+        $this->forceFill(['manual_power' => null, 'manual_since' => null])->save();
     }
 
     /**

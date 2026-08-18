@@ -176,9 +176,20 @@ plug_loop = None
 plug_loop_thread = None
 
 # Last state actually pushed to each unit, keyed by MAC: (desired, sent_at).
-# Used to skip redundant LAN commands — the broadcast fires on every sensor
-# reading, but a unit only needs a command when what we want from it changes.
+# A record of our own words, and nothing more. Good only for not repeating
+# ourselves when the same document arrives twice.
 last_sent_ac_state = {}
+
+# What each unit last told us about itself, keyed by MAC: (state, read_at).
+# Kept apart from last_sent_ac_state deliberately: one is what we asked for and
+# the other is what is true, and only the second can answer whether a unit needs
+# to be spoken to. Where we have a recent reading it decides, because telling a
+# unit to do what it is already doing is a beep for nothing.
+last_observed_ac_state = {}
+
+# How long a reading is trusted to still describe the unit. Both readers run at
+# least this often, so in practice one is nearly always in hand.
+OBSERVATION_TRUSTED_SECONDS = 90
 # How often to check that the units are doing what they were told. This is how
 # often they are *read*, which is silent and cheap. A command only follows when
 # the answer is wrong, because a Gree beeps at every command it accepts and a
@@ -194,6 +205,10 @@ LIVE_POLL_INTERVAL = 15
 # than a command does: a unit that has gone quiet should cost a reading, not
 # the ability to control the unit beside it.
 LIVE_READ_TIMEOUT = 2.0
+
+# How long a command gets to land before a unit still doing the opposite is
+# read as somebody's own doing rather than as our command still travelling.
+MANUAL_SETTLE_SECONDS = 30
 
 # Tapo metering plugs, keyed by MAC for the same reason the ACs are. Unlike the
 # units these are polled even with nobody watching, because consumption is the
@@ -840,6 +855,11 @@ async def send_gree_command(ac, desired):
 
             last_sent_ac_state[mac] = (desired, time.time())
 
+            # The unit has just changed, so the last reading no longer describes
+            # it. Drop it rather than let a pre-command observation answer for
+            # the state the command produced.
+            last_observed_ac_state.pop(mac, None)
+
             observed = None
             if device.current_temperature is not None:
                 observed = {
@@ -857,24 +877,46 @@ async def send_gree_command(ac, desired):
              err_msg = str(e) if str(e) else "TimeoutError (The AC unit did not respond)"
              print(f"[{ip}] Gree command error: {type(e).__name__} - {err_msg}")
 
-             # On a communication error drop the binding and the cached desired
-             # state, so the next pass reconnects and re-asserts rather than
-             # assuming the unit already matches.
+             # On a communication error drop the binding and everything we
+             # thought we knew, so the next pass reconnects and finds out rather
+             # than assuming. The reading goes too: the command may have landed
+             # in part, which makes the last observation a description of a unit
+             # that no longer exists.
              GREE_DEVICES.pop(mac, None)
              last_sent_ac_state.pop(mac, None)
+             last_observed_ac_state.pop(mac, None)
 
              send_ntfy_alert(f"Gree command error ({ip}): {err_msg}", "warning", key=f"ac_cmd_{ip}")
              return None
 
-def needs_command(mac, desired):
+def needs_command(unit, desired):
     """
-    Skip units already in the state we last sent them.
+    Whether this unit actually needs to be spoken to.
 
-    No periodic resend any more. A Gree chirps every time it accepts a command,
-    so a timer that re-sends whether or not anything is wrong is an audible beep
-    in the living room, on a schedule, for nothing. Drift is caught by reading
-    the unit instead -- see units_out_of_step -- which is silent.
+    Answered from what the unit last said about itself, whenever that answer is
+    recent enough to still hold. The unit is the only authority on what the unit
+    is doing: a command is needed when the hardware disagrees with the document,
+    not when the document differs from something we said earlier.
+
+    That distinction is the whole difference between switching a unit off in the
+    Gree app and hearing the house beep at it a minute later, and not.
+
+    Falls back to what we last sent only when there is no fresh reading -- no
+    better information exists then, and repeating ourselves is at least bounded.
+
+    No periodic resend at all any more. A Gree chirps at every command it
+    accepts, so a timer that re-sends whether or not anything is wrong is a beep
+    in the living room, on a schedule, for nothing.
     """
+    mac = unit.get('mac')
+    observed = last_observed_ac_state.get(mac)
+
+    if observed is not None:
+        state, read_at = observed
+
+        if time.time() - read_at <= OBSERVATION_TRUSTED_SECONDS:
+            return bool(disagreements(unit, state))
+
     previous = last_sent_ac_state.get(mac)
 
     if previous is None:
@@ -902,7 +944,7 @@ def apply_units(units):
 
             desired = desired_state(unit)
 
-            if not needs_command(mac, desired):
+            if not needs_command(unit, desired):
                 continue
 
             result = await send_gree_command(unit, desired)
@@ -1034,6 +1076,36 @@ def disagreements(unit, state):
     # evidence of disagreement.
     return [name for name, ours, theirs in checks if theirs is not None and ours != theirs]
 
+def manual_power_change(unit, state):
+    """
+    Whether a person switched this unit themselves — handset, or the Gree app.
+
+    Only ever says yes on strong evidence: we must have a record of what we
+    last sent, it must have had time to land, and the unit must nonetheless be
+    doing the opposite. Without that record a human is indistinguishable from a
+    command still in flight, and guessing would hand the house to a dropped
+    packet.
+
+    Returns True or False for what the person chose, or None for "no evidence",
+    which is not the same as False and must not be reported as one.
+    """
+    previous = last_sent_ac_state.get(unit.get('mac'))
+
+    if previous is None:
+        return None
+
+    sent, sent_at = previous
+
+    if time.time() - sent_at < MANUAL_SETTLE_SECONDS:
+        return None
+
+    theirs = state.get('power')
+
+    if theirs is None or bool(sent[0]) == bool(theirs):
+        return None
+
+    return bool(theirs)
+
 def poll_unit_state():
     """
     Read what the units actually report, without commanding them.
@@ -1077,24 +1149,47 @@ def poll_unit_state():
                 # The only reading in the system that describes the hardware
                 # rather than our intent, so it is reported even when the unit
                 # has no temperature to offer.
-                observed.append({
+                entry = {
                     'mac': unit['mac'],
                     'name': unit.get('name') or unit['mac'],
                     'ip': unit.get('ip'),
                     'port': unit.get('port') or 7000,
                     'reported_temp': temperature,
                     'reported_state': state,
-                })
+                }
 
-                # Someone reached the unit past us — the IR remote, a command
-                # that never landed, a power blip. Clearing what we last sent
-                # gets it corrected on the next re-assert tick, which reaches
-                # the same conclusion itself but up to a minute later.
+                # Recorded before anything is decided from it. This is what the
+                # unit is, and needs_command answers from it rather than from
+                # any memory of our own commands.
+                last_observed_ac_state[unit['mac']] = (state, time.time())
+
+                manual = manual_power_change(unit, state)
+
+                if manual is not None:
+                    # Somebody switched it themselves. Report that and leave it
+                    # alone: the API turns it into the unit's new intent, and
+                    # the document that comes back stops the re-assert
+                    # undoing it.
+                    print(f"[{unit.get('ip')}] switched {'on' if manual else 'off'} by hand. Following it.")
+                    entry['manual_power'] = manual
+                    observed.append(entry)
+
+                    # Nothing more to record. The document that comes back will
+                    # say the same thing, and needs_command reads that against
+                    # the observation just taken -- which already agrees -- so
+                    # no command follows and nothing beeps.
+                    continue
+
+                observed.append(entry)
+
+                # Something else moved it — a command that never landed, a power
+                # blip. Nothing to clear: the observation recorded above is what
+                # needs_command reads, so the next re-assert tick reaches this
+                # same conclusion from the same evidence and puts it right.
                 drift = disagreements(unit, state)
 
                 if drift:
-                    print(f"[{unit.get('ip')}] drifted on {', '.join(drift)}. Re-asserting.")
-                    last_sent_ac_state.pop(unit['mac'], None)
+                    print(f"[{unit.get('ip')}] drifted on {', '.join(drift)}.")
 
         return observed
 
@@ -1115,13 +1210,19 @@ def live_poller():
 
 def units_out_of_step(units):
     """
-    Ask each unit what it is doing, and name the ones that are wrong.
+    Ask each unit what it is doing. Name the ones that are wrong, and report
+    what they all said.
 
     Reading is silent and cheap; commanding is neither. This is the half that
-    can be done as often as we like.
+    can be done as often as we like — and unlike the live poll it runs whether
+    or not anybody is watching, so it is also what keeps the dashboard honest
+    about a house nobody currently has open.
+
+    Returns (macs needing a command, observations to report).
     """
     async def check_all():
         wrong = []
+        observed = []
 
         async with gree_lock:
             for unit in units:
@@ -1137,11 +1238,43 @@ def units_out_of_step(units):
                 try:
                     await asyncio.wait_for(device.update_state(), timeout=LIVE_READ_TIMEOUT)
                     state = observed_state(device)
+                    temperature = device.current_temperature
                 except Exception as exc:
                     # Unreachable for a read is unreachable for a command, so
                     # there is nothing to be gained by shouting at it.
                     print(f"[{unit.get('ip')}] re-assert check failed: {type(exc).__name__}: {exc}")
                     continue
+
+                entry = {
+                    'mac': unit['mac'],
+                    'name': unit.get('name') or unit['mac'],
+                    'ip': unit.get('ip'),
+                    'port': unit.get('port') or 7000,
+                    'reported_temp': temperature,
+                    'reported_state': state,
+                }
+
+                # Recorded before anything is decided from it. This is what the
+                # unit is, and needs_command answers from it rather than from
+                # any memory of our own commands.
+                last_observed_ac_state[unit['mac']] = (state, time.time())
+
+                manual = manual_power_change(unit, state)
+
+                if manual is not None:
+                    print(f"[{unit.get('ip')}] switched {'on' if manual else 'off'} by hand. Following it.")
+                    entry['manual_power'] = manual
+                    observed.append(entry)
+
+                    # Nothing more to record. The document that comes back will
+                    # say the same thing, and needs_command reads that against
+                    # the observation just taken -- which already agrees -- so
+                    # no command follows and nothing beeps.
+                    # Deliberately not added to `wrong`. This is the whole
+                    # point: a person's own switching is not a fault to correct.
+                    continue
+
+                observed.append(entry)
 
                 drift = disagreements(unit, state)
 
@@ -1149,9 +1282,9 @@ def units_out_of_step(units):
                     print(f"[{unit.get('ip')}] out of step on {', '.join(drift)}. Correcting.")
                     wrong.append(unit.get('mac'))
 
-        return wrong
+        return wrong, observed
 
-    return run_on_ac_loop(check_all()) or []
+    return run_on_ac_loop(check_all()) or ([], [])
 
 def state_reasserter():
     """
@@ -1177,16 +1310,21 @@ def state_reasserter():
 
         try:
             units = last_control.get('units', [])
-            wrong = set(units_out_of_step(units))
+            stale, observed = units_out_of_step(units)
+            wrong = set(stale)
+
+            # Reported whether or not anything needs correcting, so the
+            # dashboard reflects the units even with nobody watching -- and so
+            # a unit switched off by hand becomes the API's intent promptly
+            # rather than waiting for someone to open the page.
+            post_ac_sync(observed)
 
             if not wrong:
                 continue
 
-            for mac in wrong:
-                # Whatever we last sent plainly did not stick, so it is no
-                # longer evidence of anything and must not suppress the resend.
-                last_sent_ac_state.pop(mac, None)
-
+            # No cache to clear first. needs_command reads the observations just
+            # taken, which are what identified these units in the first place,
+            # so it agrees that each of them needs saying.
             apply_units([u for u in units if u.get('mac') in wrong])
         except Exception as exc:
             print(f"State re-assert failed: {type(exc).__name__}: {exc}")
