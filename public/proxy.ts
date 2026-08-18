@@ -94,16 +94,35 @@ export async function proxy(req: NextRequest) {
         Accept: 'application/json'
       },
     });
-    if (meRes?.status != 200) {
+
+    // Only a refusal means the session is over. Anything else — 502 while the
+    // API container is still coming up, 504 behind a proxy that has not
+    // re-resolved it yet — says the API is unavailable, which is not the same
+    // as the token being bad and must not cost a valid two-week session. This
+    // is why every deploy appeared to log you out: for the few seconds Laravel
+    // was down, every page load was read as a rejected token.
+    if (meRes.status === 401 || meRes.status === 403) {
       url.pathname = '/login';
-      return NextResponse.redirect(url);
-    } else if (path == "" || path == "/") {
+      const response = NextResponse.redirect(url);
+      response.cookies.delete('access_token');
+      return response;
+    }
+
+    if (!meRes.ok) {
+      // Render the page and let it retry. Its own polling recovers on its own
+      // once the API answers again, with the session still in hand.
+      return NextResponse.next();
+    }
+
+    if (path == "" || path == "/") {
       url.pathname = '/dashboard';
       return NextResponse.redirect(url);
     }
   } catch {
-    url.pathname = '/login';
-    return NextResponse.redirect(url);
+    // Could not reach the API at all. Same reasoning: unreachable is not
+    // unauthenticated, and bouncing to login would throw the session away over
+    // a container that is thirty seconds from being back.
+    return NextResponse.next();
   }
 
   return NextResponse.next();
