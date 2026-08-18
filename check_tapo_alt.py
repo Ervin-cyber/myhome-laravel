@@ -74,13 +74,32 @@ async def try_tapo(host):
     return 'failed\n' + '\n'.join(f'        {line}' for line in attempts)
 
 
+def package_layout(package):
+    """
+    List a package's submodules, so a moved API can be found rather than guessed.
+
+    Cheaper than another round of trying import paths from memory, and it
+    reports what is actually installed rather than what the docs describe.
+    """
+    import importlib
+    import pkgutil
+
+    try:
+        module = importlib.import_module(package)
+        names = sorted(m.name for m in pkgutil.iter_modules(module.__path__))
+        version = getattr(module, '__version__', '?')
+        return f'{package} {version} contains: {", ".join(names)}'
+    except Exception as exc:
+        return f'could not inspect {package}: {exc}'
+
+
 async def try_plugp100(host):
     """petretiandrea/plugp100."""
     try:
         from plugp100.common.credentials import AuthCredential
         from plugp100.new.device_factory import DeviceConnectConfiguration, connect
     except Exception as exc:
-        return missing('plugp100', exc)
+        return f'{missing("plugp100", exc)}\n        {package_layout("plugp100")}'
 
     try:
         device = await connect(DeviceConnectConfiguration(

@@ -129,6 +129,19 @@ async def main():
             await device.update()
         except Exception as exc:
             print(f"    update() FAILED: {type(exc).__name__}: {exc}")
+
+            if 'Authentication' in type(exc).__name__:
+                print("""
+    The handshake completed and the device rejected the challenge, so this
+    is credentials rather than protocol or network. Worth knowing before
+    hunting for a typo: local access only accepts the credentials of the
+    account that OWNS the device. An account the device was merely shared
+    with works in the app, because that goes through the cloud, but can
+    never satisfy the local challenge — the device holds no hash for it.
+
+    Either use the owner's account here, or factory reset the plug and add
+    it with the account you want to use, which makes that account the owner.""")
+
             await close(device)
             await try_every_transport(address, credentials)
             continue

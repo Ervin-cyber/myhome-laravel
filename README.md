@@ -56,11 +56,20 @@ device rejected the challenge hash. This is credentials, and it is worth
 confirming with a second library before touching the hardware: if both
 python-kasa and `tapo` say the same thing, the fault is not in either.
 
-Causes, cheapest first: whitespace or case in `.env` (both scripts print the
-loaded length and flag stray spaces); the account password having changed since
-the plug was added; or the plug holding credentials propagated by TP-Link Simple
-Setup from another device on the network rather than the ones for your account.
-The last needs a factory reset with other TP-Link devices powered off.
+**The credentials must belong to the account that owns the device.** Local
+access works by the device holding a hash derived from the email and password it
+was provisioned with. An account the device has merely been *shared* with
+controls it perfectly well in the app — that goes through the cloud — but can
+never satisfy the local challenge, because the device holds no hash for it. The
+failure is identical to a wrong password, and no amount of retyping fixes it.
+Either use the owner's account, or factory reset the plug and add it with the
+account you intend to use, which makes that account the owner.
+
+Other causes, cheapest first: whitespace or case in `.env` (both scripts print
+the loaded length and flag stray spaces); the account password having changed
+since the plug was added; or the plug holding credentials propagated by TP-Link
+Simple Setup from another device on the network. The last needs a factory reset
+with other TP-Link devices powered off.
 
 ## 🚀 Technical Architecture
 
