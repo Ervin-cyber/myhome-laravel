@@ -83,6 +83,47 @@ MODES = {
 DEVICE_SETTINGS = ('mode', 'fan_speed', 'vertical_swing', 'horizontal_swing', 'xfan',
                    'quiet', 'turbo')
 
+def _by_member(mapping):
+    """
+    Invert a name->enum map, for reading a unit's answer back.
+
+    greeclimate returns these properties as plain ints. Keying by the enum
+    member still works because they are IntEnums, which hash as their value, so
+    a lookup with a bare int finds the member. Anything unrecognised misses and
+    yields None, which reads as "the unit said something we have no word for" --
+    the right answer, and never a wrong one.
+    """
+    return {member: name for name, member in mapping.items() if member is not None}
+
+FAN_SPEEDS_BY_MEMBER = _by_member(FAN_SPEEDS)
+VERTICAL_SWING_BY_MEMBER = _by_member(VERTICAL_SWING)
+HORIZONTAL_SWING_BY_MEMBER = _by_member(HORIZONTAL_SWING)
+MODES_BY_MEMBER = _by_member(MODES)
+
+def _flag(value):
+    """A tri-state flag: None stays None rather than collapsing to False."""
+    return None if value is None else bool(value)
+
+def observed_state(device):
+    """
+    Everything the unit says about itself, in the vocabulary the API uses.
+
+    update_state() has already pulled the whole set off the hardware, so this
+    costs nothing beyond the reading we were taking anyway -- and it is the only
+    description of the units in this system that is not an echo of what we sent.
+    """
+    return {
+        'power': bool(device.power),
+        'mode': MODES_BY_MEMBER.get(getattr(device, 'mode', None)),
+        'target_temp': getattr(device, 'target_temperature', None),
+        'fan_speed': FAN_SPEEDS_BY_MEMBER.get(getattr(device, 'fan_speed', None)),
+        'swing_v': VERTICAL_SWING_BY_MEMBER.get(getattr(device, 'vertical_swing', None)),
+        'swing_h': HORIZONTAL_SWING_BY_MEMBER.get(getattr(device, 'horizontal_swing', None)),
+        'xfan': _flag(getattr(device, 'xfan', None)),
+        'quiet': _flag(getattr(device, 'quiet', None)),
+        'turbo': _flag(getattr(device, 'turbo', None)),
+    }
+
 def report_unmapped_settings():
     """
     Name every setting this greeclimate build cannot express.
@@ -149,6 +190,11 @@ STATE_REASSERT_INTERVAL = 60
 # so the page shows what they actually report rather than what we last told
 # them. The window is carried in the control document and expires on its own.
 LIVE_POLL_INTERVAL = 15
+
+# Live reads share gree_lock with the commands, so they get a tighter budget
+# than a command does: a unit that has gone quiet should cost a reading, not
+# the ability to control the unit beside it.
+LIVE_READ_TIMEOUT = 2.0
 
 # Tapo metering plugs, keyed by MAC for the same reason the ACs are. Unlike the
 # units these are polled even with nobody watching, because consumption is the
@@ -948,6 +994,42 @@ def fail_safe(reason):
     report_actual_state(False, False)
     send_ntfy_alert(f"Climate control failsafe: {reason}", "warning", key="failsafe")
 
+def disagreements(unit, state):
+    """
+    Which settings the unit is not holding, out of the ones we asked for.
+
+    Deliberately narrow. A Gree reports fields it is currently ignoring — a
+    setpoint in fan mode, a fan speed of its own choosing under turbo — and
+    treating those as drift would have us re-commanding units that are doing
+    exactly as they were told, forever.
+    """
+    if not bool(unit.get('power')):
+        # Everything else is meaningless on a unit we want off, and the unit
+        # reports whatever it was last left with.
+        return ['power'] if state.get('power') else []
+
+    checks = [
+        ('power', True, bool(state.get('power'))),
+        ('mode', unit.get('mode'), state.get('mode')),
+        ('xfan', bool(unit.get('xfan')), state.get('xfan')),
+        ('quiet', bool(unit.get('quiet')), state.get('quiet')),
+        ('turbo', bool(unit.get('turbo')), state.get('turbo')),
+        ('swing_v', unit.get('swing_v'), state.get('swing_v')),
+        ('swing_h', unit.get('swing_h'), state.get('swing_h')),
+    ]
+
+    # The unit picks its own speed under either of these and reports that.
+    if not (unit.get('quiet') or unit.get('turbo')):
+        checks.append(('fan_speed', unit.get('fan_speed'), state.get('fan_speed')))
+
+    # Ignored in fan mode, and the unit says so by reporting something else.
+    if unit.get('mode') != 'fan':
+        checks.append(('target_temp', unit.get('target_temp'), state.get('target_temp')))
+
+    # A None on the unit's side means "no word for what it said", which is not
+    # evidence of disagreement.
+    return [name for name, ours, theirs in checks if theirs is not None and ours != theirs]
+
 def poll_unit_state():
     """
     Read what the units actually report, without commanding them.
@@ -970,12 +1052,23 @@ def poll_unit_state():
                     continue
 
                 try:
-                    await asyncio.wait_for(device.update_state(), timeout=5.0)
-                except Exception as exc:
-                    print(f"[{unit.get('ip')}] live poll failed: {type(exc).__name__}")
-                    continue
+                    # Tighter than a command's timeout on purpose. This lock is
+                    # shared with send_gree_command, so a unit that has gone
+                    # quiet must cost us a reading, never the ability to control
+                    # the unit next to it.
+                    await asyncio.wait_for(device.update_state(), timeout=LIVE_READ_TIMEOUT)
 
-                actual_power = bool(device.power)
+                    # Inside the same guard as the read. Reading the properties
+                    # back is as fallible as reaching the unit was -- this build
+                    # of greeclimate decides what each of them does -- and a
+                    # throw here must cost this unit's reading and no more. Left
+                    # outside, it escaped the whole poll and took the other
+                    # unit's reading with it.
+                    state = observed_state(device)
+                    temperature = device.current_temperature
+                except Exception as exc:
+                    print(f"[{unit.get('ip')}] live poll failed: {type(exc).__name__}: {exc}")
+                    continue
 
                 # The only reading in the system that describes the hardware
                 # rather than our intent, so it is reported even when the unit
@@ -985,17 +1078,18 @@ def poll_unit_state():
                     'name': unit.get('name') or unit['mac'],
                     'ip': unit.get('ip'),
                     'port': unit.get('port') or 7000,
-                    'reported_temp': device.current_temperature,
-                    'reported_power': actual_power,
+                    'reported_temp': temperature,
+                    'reported_state': state,
                 })
 
                 # Someone reached the unit past us — the IR remote, a command
                 # that never landed, a power blip. Dropping the cached desired
                 # state makes the next re-assert tick treat it as unknown and
                 # command it again, rather than waiting out AC_RESEND_INTERVAL.
-                if actual_power != bool(unit.get('power')):
-                    print(f"[{unit.get('ip')}] drifted: unit says power={actual_power}, "
-                          f"we asked for {bool(unit.get('power'))}. Re-asserting.")
+                drift = disagreements(unit, state)
+
+                if drift:
+                    print(f"[{unit.get('ip')}] drifted on {', '.join(drift)}. Re-asserting.")
                     last_sent_ac_state.pop(unit['mac'], None)
 
         return observed

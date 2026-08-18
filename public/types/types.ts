@@ -49,6 +49,28 @@ export const SWING_HORIZONTAL: { value: SwingHorizontal; label: string }[] = [
     { value: 'fixed_right', label: 'Right' },
 ];
 
+/** The settings a person chooses, and so the ones that can be seen not to land. */
+export type SettableField = 'fan_speed' | 'swing_vertical' | 'swing_horizontal' | 'xfan' | 'quiet' | 'turbo';
+
+/**
+ * What the unit reports about itself, read straight off the hardware.
+ *
+ * Every field is nullable: a Gree answers with values this build may have no
+ * name for, and inventing one would put a guess where the whole point is that
+ * this is the one thing we did not make up.
+ */
+export interface ObservedState {
+    power: boolean | null;
+    mode: string | null;
+    target_temp: number | null;
+    fan_speed: FanSpeed | null;
+    swing_v: SwingVertical | null;
+    swing_h: SwingHorizontal | null;
+    xfan: boolean | null;
+    quiet: boolean | null;
+    turbo: boolean | null;
+}
+
 export interface Room {
     id: number;
     name: string;
@@ -93,6 +115,16 @@ export interface AirConditioner {
      * and it disagreeing with power_on is the one honest sign of a lost command.
      */
     observed_power: boolean | null;
+    /** The unit's own account of itself. A null field means it said something we have no word for. */
+    observed_state: ObservedState | null;
+    observed_at: string | null;
+    /**
+     * Settings the unit is not holding, and what it has instead. Empty when it
+     * agrees, and also when the last observation is too old to mean anything.
+     */
+    divergence: Partial<Record<SettableField, string | number | boolean>>;
+    /** False while a command may still be in flight; true once it counts as a fault. */
+    divergence_settled: boolean;
     fan_speed: FanSpeed;
     swing_vertical: SwingVertical;
     swing_horizontal: SwingHorizontal;

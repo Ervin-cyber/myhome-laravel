@@ -1,7 +1,7 @@
 "use client";
 
 import { JSX } from 'react';
-import { AirConditioner, FAN_SPEEDS, FanSpeed, SWING_HORIZONTAL, SWING_VERTICAL, SwingHorizontal, SwingVertical } from '@/types/types';
+import { AirConditioner, FAN_SPEEDS, FanSpeed, SettableField, SWING_HORIZONTAL, SWING_VERTICAL, SwingHorizontal, SwingVertical } from '@/types/types';
 import { formatAge, isStale } from '@/lib/utils';
 import ACUnitIcon from './ACUnitIcon';
 
@@ -48,6 +48,23 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
     // we send. Better to say so than to offer a control that does nothing.
     const fanSpeedLocked = ac.quiet || ac.turbo;
 
+    /**
+     * Flags a setting the unit is not actually holding.
+     *
+     * Deliberately not worded as a failure. Before the settle window is up the
+     * command may simply still be travelling; after it, the cause could equally
+     * be a lost command or somebody at the handset, and this cannot tell those
+     * apart. "Not applied" is the part that is true either way, and the Pi goes
+     * on re-asserting, so it can still clear itself.
+     */
+    const note = (field: SettableField) => {
+        if (!(field in ac.divergence)) return null;
+
+        return ac.divergence_settled
+            ? <span className="ml-1 normal-case text-amber-500/90">not applied</span>
+            : <span className="ml-1 normal-case text-gray-500">sending…</span>;
+    };
+
     return (
         <div className={`rounded-xl border border-gray-700/50 bg-gray-900/40 p-3 ${ac.online ? '' : 'opacity-60'}`}>
             <div className="flex items-center justify-between gap-3">
@@ -86,7 +103,10 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
             <div className="mt-3 grid grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1">
                     <span className="text-[10px] uppercase tracking-wide text-gray-500">
-                        Fan{fanSpeedLocked && <span className="ml-1 normal-case text-amber-500/80">set by {profile}</span>}
+                        Fan
+                        {fanSpeedLocked
+                            ? <span className="ml-1 normal-case text-amber-500/80">set by {profile}</span>
+                            : note('fan_speed')}
                     </span>
                     <select
                         value={ac.fan_speed}
@@ -102,7 +122,7 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                 </label>
 
                 <label className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wide text-gray-500">Up / down</span>
+                    <span className="text-[10px] uppercase tracking-wide text-gray-500">Up / down{note('swing_vertical')}</span>
                     <select
                         value={ac.swing_vertical}
                         onChange={(e) => onUpdate(ac.id, { swing_vertical: e.target.value as SwingVertical })}
@@ -117,7 +137,7 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                 </label>
 
                 <label className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wide text-gray-500">Left / right</span>
+                    <span className="text-[10px] uppercase tracking-wide text-gray-500">Left / right{note('swing_horizontal')}</span>
                     <select
                         value={ac.swing_horizontal}
                         onChange={(e) => onUpdate(ac.id, { swing_horizontal: e.target.value as SwingHorizontal })}
@@ -132,7 +152,7 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                 </label>
 
                 <label className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wide text-gray-500">Coil dry</span>
+                    <span className="text-[10px] uppercase tracking-wide text-gray-500">Coil dry{note('xfan')}</span>
                     <button
                         onClick={() => onUpdate(ac.id, { xfan: !ac.xfan })}
                         disabled={isPending || !ac.online}
@@ -146,7 +166,9 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
             </div>
 
             <div className="mt-2">
-                <span className="text-[10px] uppercase tracking-wide text-gray-500">Fan profile</span>
+                <span className="text-[10px] uppercase tracking-wide text-gray-500">
+                    Fan profile{note('quiet') ?? note('turbo')}
+                </span>
                 <div className="mt-1 grid grid-cols-3 gap-2">
                     {FAN_PROFILES.map(({ key, label, body }) => (
                         <button

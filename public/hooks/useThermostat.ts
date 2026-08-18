@@ -141,8 +141,17 @@ export function useThermostat() {
         refreshData();
         requestLiveData();
 
+        // Matched to the Pi's live poll, so what the units report reaches the
+        // screen about as fast as it is read. Only the units' own readings move
+        // on this cadence and they are not broadcast -- the Pi writes them and
+        // says nothing, because waking every listener for a temperature nobody
+        // is looking at is the cost this window exists to avoid.
         const pollInterval = setInterval(() => {
-            fetchStats().then(setStats).catch(console.error);
+            // A background tab is nobody watching, and the units are not being
+            // polled on its behalf either, so there is nothing new to collect.
+            if (document.visibilityState !== 'visible') return;
+
+            refreshData();
         }, 15000);
 
         // Only while the tab is actually in front: a dashboard left open on a

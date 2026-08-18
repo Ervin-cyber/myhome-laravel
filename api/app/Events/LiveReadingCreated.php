@@ -67,10 +67,11 @@ class LiveReadingCreated implements ShouldBroadcastNow
                 'reported_temp',
                 'reported_at',
                 'calibration_offset',
-                // Both, or the observed_power accessor silently reads null off
-                // an unloaded column and every unit looks like it agrees with us.
-                'observed_power_on',
+                // All three, or the observed accessors silently read null off
+                // unloaded columns and every unit looks like it agrees with us.
+                'observed_state',
                 'observed_at',
+                'settings_changed_at',
             ]),
         ];
     }
