@@ -36,7 +36,7 @@ class AirConditionerController extends Controller
             'devices.*.reported_temp' => 'nullable|numeric|between:-20,60',
             // Sent only by the live poller, which reads the unit without
             // commanding it. Absent from a discovery sync, hence nullable.
-            'devices.*.reported_power' => 'nullable|boolean',
+            'devices.*.reported_state' => 'nullable|array',
         ]);
 
         $seenIds = [];
@@ -58,8 +58,8 @@ class AirConditionerController extends Controller
             // unit is doing is for the dashboard to read on its next poll, and
             // broadcasting it would put the Pi's own observation back on the
             // channel the Pi diffs.
-            if (array_key_exists('reported_power', $device) && $device['reported_power'] !== null) {
-                $ac->observed_power_on = (bool) $device['reported_power'];
+            if (! empty($device['reported_state'])) {
+                $ac->observed_state = $this->knownObservationKeys($device['reported_state']);
                 $ac->observed_at = now();
             }
 
@@ -104,6 +104,23 @@ class AirConditionerController extends Controller
         ]);
     }
 
+    /**
+     * Keep only the keys we know how to read.
+     *
+     * The Pi is trusted, but a column that stores whatever it was handed grows
+     * whatever greeclimate happens to expose next, and every reader downstream
+     * inherits the surprise. An allowlist keeps the shape ours.
+     *
+     * @return array<string, mixed>
+     */
+    private function knownObservationKeys(array $reported): array
+    {
+        return array_intersect_key($reported, array_flip([
+            'power', 'mode', 'target_temp', 'fan_speed',
+            'swing_v', 'swing_h', 'xfan', 'quiet', 'turbo',
+        ]));
+    }
+
     public function update(Request $request, $id)
     {
         $ac = AirConditioner::findOrFail($id);
@@ -143,6 +160,14 @@ class AirConditionerController extends Controller
         }
 
         $previousRoomId = $ac->getOriginal('room_id');
+
+        // Stamped only for the settings a person chooses, so the dashboard can
+        // tell "asked for, not applied yet" from "asked for a while ago and it
+        // never took". A room reassignment or a rename is not a command to the
+        // hardware and must not restart that clock.
+        if ($ac->isDirty(['fan_speed', 'swing_vertical', 'swing_horizontal', 'xfan', 'quiet', 'turbo'])) {
+            $ac->settings_changed_at = now();
+        }
 
         $ac->save();
 

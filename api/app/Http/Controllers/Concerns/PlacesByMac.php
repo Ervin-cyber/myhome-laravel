@@ -29,27 +29,4 @@ trait PlacesByMac
     {
         return strtolower(preg_replace('/[^0-9a-fA-F]/', '', $mac));
     }
-
-    /**
-     * Whether a MAC is one this install cares about, per an allowlist in
-     * config/climate.php.
-     *
-     * An empty list means "no opinion", and everything passes. That is the
-     * right default for a fresh install, where filtering by a MAC nobody has
-     * looked up yet would hide the very devices you are trying to identify.
-     */
-    protected function isAllowedMac(string $mac, string $configKey): bool
-    {
-        $allowed = config($configKey, []);
-
-        if (empty($allowed)) {
-            return true;
-        }
-
-        return in_array(
-            $this->normaliseMac($mac),
-            array_map(fn ($entry) => $this->normaliseMac((string) $entry), $allowed),
-            true
-        );
-    }
 }

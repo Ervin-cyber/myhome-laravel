@@ -83,6 +83,47 @@ MODES = {
 DEVICE_SETTINGS = ('mode', 'fan_speed', 'vertical_swing', 'horizontal_swing', 'xfan',
                    'quiet', 'turbo')
 
+def _by_member(mapping):
+    """
+    Invert a name->enum map, for reading a unit's answer back.
+
+    greeclimate returns these properties as plain ints. Keying by the enum
+    member still works because they are IntEnums, which hash as their value, so
+    a lookup with a bare int finds the member. Anything unrecognised misses and
+    yields None, which reads as "the unit said something we have no word for" --
+    the right answer, and never a wrong one.
+    """
+    return {member: name for name, member in mapping.items() if member is not None}
+
+FAN_SPEEDS_BY_MEMBER = _by_member(FAN_SPEEDS)
+VERTICAL_SWING_BY_MEMBER = _by_member(VERTICAL_SWING)
+HORIZONTAL_SWING_BY_MEMBER = _by_member(HORIZONTAL_SWING)
+MODES_BY_MEMBER = _by_member(MODES)
+
+def _flag(value):
+    """A tri-state flag: None stays None rather than collapsing to False."""
+    return None if value is None else bool(value)
+
+def observed_state(device):
+    """
+    Everything the unit says about itself, in the vocabulary the API uses.
+
+    update_state() has already pulled the whole set off the hardware, so this
+    costs nothing beyond the reading we were taking anyway -- and it is the only
+    description of the units in this system that is not an echo of what we sent.
+    """
+    return {
+        'power': bool(device.power),
+        'mode': MODES_BY_MEMBER.get(getattr(device, 'mode', None)),
+        'target_temp': getattr(device, 'target_temperature', None),
+        'fan_speed': FAN_SPEEDS_BY_MEMBER.get(getattr(device, 'fan_speed', None)),
+        'swing_v': VERTICAL_SWING_BY_MEMBER.get(getattr(device, 'vertical_swing', None)),
+        'swing_h': HORIZONTAL_SWING_BY_MEMBER.get(getattr(device, 'horizontal_swing', None)),
+        'xfan': _flag(getattr(device, 'xfan', None)),
+        'quiet': _flag(getattr(device, 'quiet', None)),
+        'turbo': _flag(getattr(device, 'turbo', None)),
+    }
+
 def report_unmapped_settings():
     """
     Name every setting this greeclimate build cannot express.
@@ -129,6 +170,11 @@ ws_app = None
 ac_loop = None
 ac_loop_thread = None
 
+# Metering gets its own loop. See start_plug_loop for why sharing one with the
+# actuators cost the house its cooling.
+plug_loop = None
+plug_loop_thread = None
+
 # Last state actually pushed to each unit, keyed by MAC: (desired, sent_at).
 # Used to skip redundant LAN commands — the broadcast fires on every sensor
 # reading, but a unit only needs a command when what we want from it changes.
@@ -144,6 +190,11 @@ STATE_REASSERT_INTERVAL = 60
 # so the page shows what they actually report rather than what we last told
 # them. The window is carried in the control document and expires on its own.
 LIVE_POLL_INTERVAL = 15
+
+# Live reads share gree_lock with the commands, so they get a tighter budget
+# than a command does: a unit that has gone quiet should cost a reading, not
+# the ability to control the unit beside it.
+LIVE_READ_TIMEOUT = 2.0
 
 # Tapo metering plugs, keyed by MAC for the same reason the ACs are. Unlike the
 # units these are polled even with nobody watching, because consumption is the
@@ -296,12 +347,43 @@ def run_on_ac_loop(coro, timeout=60):
     if ac_loop is None:
         start_ac_loop()
 
-    future = asyncio.run_coroutine_threadsafe(coro, ac_loop)
+    return run_on_loop(ac_loop, coro, timeout, 'AC')
+
+def start_plug_loop():
+    """
+    A second event loop, for metering only.
+
+    Plugs must never share a loop with the actuators. An unreachable Tapo takes
+    timeouts and a rediscovery sweep to give up, and on a shared loop every Gree
+    command queues behind that — including the ones issued from the websocket
+    thread, which then cannot answer a ping and loses the connection that
+    delivers control documents. Metering is a nicety; it is not allowed to cost
+    the house its cooling.
+    """
+    global plug_loop, plug_loop_thread
+
+    if plug_loop is not None:
+        return
+
+    plug_loop = asyncio.new_event_loop()
+    plug_loop_thread = threading.Thread(
+        target=plug_loop.run_forever, name="plug-loop", daemon=True
+    )
+    plug_loop_thread.start()
+
+def run_on_plug_loop(coro, timeout=60):
+    if plug_loop is None:
+        start_plug_loop()
+
+    return run_on_loop(plug_loop, coro, timeout, 'plug')
+
+def run_on_loop(loop, coro, timeout, label):
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
         return future.result(timeout=timeout)
     except Exception as e:
         future.cancel()
-        print(f"AC loop task failed: {type(e).__name__} - {e}")
+        print(f"{label} loop task failed: {type(e).__name__} - {e}")
         return None
 
 def post_plug_sync(plugs):
@@ -586,7 +668,7 @@ def poll_plugs():
 
         return readings
 
-    post_plug_sync(run_on_ac_loop(read_all()) or [])
+    post_plug_sync(run_on_plug_loop(read_all()) or [])
 
 def plug_poller():
     """
@@ -912,6 +994,42 @@ def fail_safe(reason):
     report_actual_state(False, False)
     send_ntfy_alert(f"Climate control failsafe: {reason}", "warning", key="failsafe")
 
+def disagreements(unit, state):
+    """
+    Which settings the unit is not holding, out of the ones we asked for.
+
+    Deliberately narrow. A Gree reports fields it is currently ignoring — a
+    setpoint in fan mode, a fan speed of its own choosing under turbo — and
+    treating those as drift would have us re-commanding units that are doing
+    exactly as they were told, forever.
+    """
+    if not bool(unit.get('power')):
+        # Everything else is meaningless on a unit we want off, and the unit
+        # reports whatever it was last left with.
+        return ['power'] if state.get('power') else []
+
+    checks = [
+        ('power', True, bool(state.get('power'))),
+        ('mode', unit.get('mode'), state.get('mode')),
+        ('xfan', bool(unit.get('xfan')), state.get('xfan')),
+        ('quiet', bool(unit.get('quiet')), state.get('quiet')),
+        ('turbo', bool(unit.get('turbo')), state.get('turbo')),
+        ('swing_v', unit.get('swing_v'), state.get('swing_v')),
+        ('swing_h', unit.get('swing_h'), state.get('swing_h')),
+    ]
+
+    # The unit picks its own speed under either of these and reports that.
+    if not (unit.get('quiet') or unit.get('turbo')):
+        checks.append(('fan_speed', unit.get('fan_speed'), state.get('fan_speed')))
+
+    # Ignored in fan mode, and the unit says so by reporting something else.
+    if unit.get('mode') != 'fan':
+        checks.append(('target_temp', unit.get('target_temp'), state.get('target_temp')))
+
+    # A None on the unit's side means "no word for what it said", which is not
+    # evidence of disagreement.
+    return [name for name, ours, theirs in checks if theirs is not None and ours != theirs]
+
 def poll_unit_state():
     """
     Read what the units actually report, without commanding them.
@@ -934,12 +1052,23 @@ def poll_unit_state():
                     continue
 
                 try:
-                    await asyncio.wait_for(device.update_state(), timeout=5.0)
-                except Exception as exc:
-                    print(f"[{unit.get('ip')}] live poll failed: {type(exc).__name__}")
-                    continue
+                    # Tighter than a command's timeout on purpose. This lock is
+                    # shared with send_gree_command, so a unit that has gone
+                    # quiet must cost us a reading, never the ability to control
+                    # the unit next to it.
+                    await asyncio.wait_for(device.update_state(), timeout=LIVE_READ_TIMEOUT)
 
-                actual_power = bool(device.power)
+                    # Inside the same guard as the read. Reading the properties
+                    # back is as fallible as reaching the unit was -- this build
+                    # of greeclimate decides what each of them does -- and a
+                    # throw here must cost this unit's reading and no more. Left
+                    # outside, it escaped the whole poll and took the other
+                    # unit's reading with it.
+                    state = observed_state(device)
+                    temperature = device.current_temperature
+                except Exception as exc:
+                    print(f"[{unit.get('ip')}] live poll failed: {type(exc).__name__}: {exc}")
+                    continue
 
                 # The only reading in the system that describes the hardware
                 # rather than our intent, so it is reported even when the unit
@@ -949,17 +1078,18 @@ def poll_unit_state():
                     'name': unit.get('name') or unit['mac'],
                     'ip': unit.get('ip'),
                     'port': unit.get('port') or 7000,
-                    'reported_temp': device.current_temperature,
-                    'reported_power': actual_power,
+                    'reported_temp': temperature,
+                    'reported_state': state,
                 })
 
                 # Someone reached the unit past us — the IR remote, a command
                 # that never landed, a power blip. Dropping the cached desired
                 # state makes the next re-assert tick treat it as unknown and
                 # command it again, rather than waiting out AC_RESEND_INTERVAL.
-                if actual_power != bool(unit.get('power')):
-                    print(f"[{unit.get('ip')}] drifted: unit says power={actual_power}, "
-                          f"we asked for {bool(unit.get('power'))}. Re-asserting.")
+                drift = disagreements(unit, state)
+
+                if drift:
+                    print(f"[{unit.get('ip')}] drifted on {', '.join(drift)}. Re-asserting.")
                     last_sent_ac_state.pop(unit['mac'], None)
 
         return observed
@@ -1007,27 +1137,46 @@ def state_reasserter():
 
 def control_watchdog():
     """
-    Fail safe when the API stops talking to us.
+    Fail safe when the API stops answering, and recover when it does again.
 
     The Pi has no autonomy by design, so a dead API, an expired document or a
-    dropped websocket must not leave the boiler running unattended.
+    dropped websocket must not leave the boiler running unattended. But an old
+    document on its own does not mean any of those things — broadcasts are
+    driven by sensor readings, so the API can be perfectly healthy and simply
+    have had nothing to say. Only a document it will not hand over on request
+    is evidence, so this asks before acting, and goes on asking afterwards
+    because nothing else clears a fail-safe in a settled house.
     """
     while True:
         time.sleep(WATCHDOG_INTERVAL)
-
-        if failsafe_tripped:
-            continue
 
         if last_control_at == 0:
             continue
 
         age = time.time() - last_control_at
         expires_at = (last_control or {}).get('expires_at') or 0
+        stale = age > CONTROL_TIMEOUT or (expires_at and time.time() > expires_at)
 
-        if age > CONTROL_TIMEOUT:
-            fail_safe(f"no control document for {int(age)}s")
-        elif expires_at and time.time() > expires_at:
-            fail_safe("control document expired")
+        if not stale and not failsafe_tripped:
+            continue
+
+        # Silence is not evidence that the API is dead. Broadcasts are driven
+        # by sensor readings, so one quiet or flaky ESP looks exactly like a
+        # dead controller from here — and the house lost its cooling for it.
+        # Ask before failing safe, and keep asking afterwards, because a
+        # settled house produces no document change to recover on.
+        control = fetch_control()
+
+        if control:
+            if failsafe_tripped:
+                print("Control document reachable again; resuming.")
+            execute_control(control)
+            continue
+
+        if not failsafe_tripped:
+            reason = ("control document expired" if not age > CONTROL_TIMEOUT
+                      else f"no control document for {int(age)}s")
+            fail_safe(f"{reason} and the API did not answer")
 
 def fetch_control():
     """Pull the current control document, used at startup and after a reconnect."""
@@ -1077,7 +1226,12 @@ def on_message(ws, message):
 
             current = comparable_control(control)
 
-            if current != previous_control_data:
+            # An unchanged document is still news after a fail-safe: the
+            # hardware was forced off underneath it, so it no longer describes
+            # anything. Without this the units stay off for as long as the
+            # house stays settled, which is indefinitely, while the dashboard
+            # goes on showing them running.
+            if current != previous_control_data or failsafe_tripped:
                 execute_control(control)
                 previous_control_data = current
             else:
@@ -1142,6 +1296,7 @@ if __name__ == '__main__':
         threading.Thread(target=state_reasserter, name="state-reasserter", daemon=True).start()
 
         if kasa and TAPO_EMAIL and TAPO_PASSWORD:
+            start_plug_loop()
             threading.Thread(target=plug_poller, name="plug-poller", daemon=True).start()
         elif TAPO_EMAIL and not kasa:
             print("WARNING: TAPO_EMAIL is set but python-kasa is not installed; no metering.")

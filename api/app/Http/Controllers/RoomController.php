@@ -28,8 +28,17 @@ class RoomController extends Controller
      */
     public function live()
     {
+        $until = ClimateService::requestLiveData();
+
+        // The window only reaches the Pi inside a control document, so without
+        // this it waited for the next sensor reading to be broadcast before it
+        // started polling at all — most of a five-minute window could lapse
+        // before the first live reading was taken. Costs nothing at the far
+        // end: the Pi's diff ignores live_until, so no unit is commanded.
+        event(new LiveReadingCreated(null));
+
         return response()->json([
-            'live_until' => ClimateService::requestLiveData(),
+            'live_until' => $until,
             'window' => ClimateService::LIVE_WINDOW_SECONDS,
         ]);
     }

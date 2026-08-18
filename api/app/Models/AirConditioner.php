@@ -31,12 +31,13 @@ class AirConditioner extends Model
         'reported_at',
         'calibration_offset',
         'power_changed_at',
-        'observed_power_on',
+        'observed_state',
         'observed_at',
+        'settings_changed_at',
     ];
 
     /**
-     * How long an observation of the unit's own power state stays meaningful.
+     * How long an observation of the unit's own state stays meaningful.
      *
      * The Pi only interrogates the units while a dashboard is open, so outside
      * that window the last answer ages out rather than being presented as
@@ -44,6 +45,32 @@ class AirConditioner extends Model
      * hardware rather than intent.
      */
     public const OBSERVED_FRESH_SECONDS = 180;
+
+    /**
+     * How long a command gets to land before a unit still disagreeing is
+     * called a fault rather than a request in flight.
+     *
+     * Long enough for the re-assert to have had a second go: it runs every
+     * STATE_REASSERT_INTERVAL and a live poll drops the cached state the
+     * moment it sees a disagreement, so a retry follows within about a minute.
+     */
+    public const SETTLE_SECONDS = 120;
+
+    /**
+     * Settings a person chooses, mapped to the key the unit reports them under.
+     *
+     * Power, mode and setpoint are absent on purpose. Those are decided by the
+     * control loop from room temperature and the house mode, so they change
+     * without anybody touching them and disagreeing about one is not a fault.
+     */
+    private const COMPARABLE = [
+        'fan_speed' => 'fan_speed',
+        'swing_vertical' => 'swing_v',
+        'swing_horizontal' => 'swing_h',
+        'xfan' => 'xfan',
+        'quiet' => 'quiet',
+        'turbo' => 'turbo',
+    ];
 
     /** Values the dashboard may set, mirroring the greeclimate enums. */
     public const FAN_SPEEDS = ['auto', 'low', 'medium_low', 'medium', 'medium_high', 'high'];
@@ -64,11 +91,12 @@ class AirConditioner extends Model
         'reported_at' => 'datetime',
         'calibration_offset' => 'float',
         'power_changed_at' => 'datetime',
-        'observed_power_on' => 'boolean',
+        'observed_state' => 'array',
         'observed_at' => 'datetime',
+        'settings_changed_at' => 'datetime',
     ];
 
-    protected $appends = ['calibrated_temp', 'observed_power'];
+    protected $appends = ['calibrated_temp', 'observed_power', 'divergence', 'divergence_settled'];
 
     public function room(): BelongsTo
     {
@@ -90,21 +118,96 @@ class AirConditioner extends Model
     }
 
     /**
-     * What the unit itself last said about its power, or null when nobody has
-     * asked recently enough for the answer to still mean anything.
+     * The unit's own account of itself, or null when nobody has asked recently
+     * enough for the answer to still mean anything.
      *
-     * Null rather than false on purpose. Everything else in this system reports
-     * what we sent; conflating "we have not looked" with "it is off" would turn
-     * the one honest signal we have back into another echo of our own intent.
+     * Null rather than an empty array on purpose. Everything else in this
+     * system reports what we sent; conflating "we have not looked" with "it
+     * reports nothing" would turn the one honest signal we have back into
+     * another echo of our own intent.
      */
-    public function getObservedPowerAttribute(): ?bool
+    public function freshObservation(): ?array
     {
-        if ($this->observed_power_on === null || $this->observed_at === null) {
+        if (! is_array($this->observed_state) || $this->observed_at === null) {
             return null;
         }
 
         return $this->observed_at->diffInSeconds(now()) <= self::OBSERVED_FRESH_SECONDS
-            ? (bool) $this->observed_power_on
+            ? $this->observed_state
             : null;
+    }
+
+    public function getObservedPowerAttribute(): ?bool
+    {
+        $observed = $this->freshObservation();
+
+        return isset($observed['power']) ? (bool) $observed['power'] : null;
+    }
+
+    /**
+     * Settings where the unit disagrees with us, and what it has instead.
+     *
+     * Empty is the normal case and also what a stale observation returns: with
+     * nothing recent to compare against, silence is the only honest answer.
+     *
+     * @return array<string, mixed>
+     */
+    public function getDivergenceAttribute(): array
+    {
+        $observed = $this->freshObservation();
+
+        if ($observed === null) {
+            return [];
+        }
+
+        // Settings are only ever written to a running unit -- send_gree_command
+        // sets power and stops there when switching off -- so a unit that is
+        // off still holds whatever it was last left with. Comparing against
+        // that would mark every switched-off unit as having failed to take a
+        // command nobody sent it.
+        if (! $this->power_on || ! ($observed['power'] ?? false)) {
+            return [];
+        }
+
+        $diverged = [];
+
+        foreach (self::COMPARABLE as $ours => $theirs) {
+            // A unit under quiet or turbo picks its own fan speed and reports
+            // that, so comparing it would report a fault against every unit
+            // doing exactly what it was asked.
+            if ($ours === 'fan_speed' && ($this->quiet || $this->turbo)) {
+                continue;
+            }
+
+            if (! array_key_exists($theirs, $observed) || $observed[$theirs] === null) {
+                continue;
+            }
+
+            $mine = $this->{$ours};
+            $its = is_bool($mine) ? (bool) $observed[$theirs] : $observed[$theirs];
+
+            if ($mine !== $its) {
+                $diverged[$ours] = $its;
+            }
+        }
+
+        return $diverged;
+    }
+
+    /**
+     * Whether a disagreement has lasted long enough to be a fault rather than
+     * a command still in flight.
+     *
+     * With no recorded change, anything we see is the unit's own doing — a
+     * handset, or a setting it declined — and there is nothing in flight for
+     * it to be.
+     */
+    public function getDivergenceSettledAttribute(): bool
+    {
+        if ($this->settings_changed_at === null) {
+            return true;
+        }
+
+        return $this->settings_changed_at->diffInSeconds(now()) > self::SETTLE_SECONDS;
     }
 }
