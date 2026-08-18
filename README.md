@@ -37,6 +37,20 @@ TAPO_HOSTS=192.168.1.8    # optional; skips broadcast discovery
 Metering is entirely optional — without `python-kasa` installed, or without
 those variables, the plug thread never starts and climate control is unaffected.
 
+### Keep the account small
+
+These are TP-Link *cloud* credentials, and local access requires the account
+that **owns** the device, so whatever is in this file can sign in and reach
+every device on that account — camera feeds included.
+
+Provision the plug with a dedicated account that owns nothing else, then share
+it back to your everyday account so the app still works. Whoever reads this file
+then learns how much electricity the air conditioners use, and nothing more.
+
+Worth doing regardless: `chmod 600 .env`. It is git-ignored, it is not inside
+the nginx document root, and Laravel reads a different file in `api/`, so the
+filesystem is the exposure that remains.
+
 Run `python3 check_tapo.py [ip]` on the Pi to diagnose; it reports each stage
 separately. A working P110 looks like this:
 
