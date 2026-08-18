@@ -37,6 +37,26 @@ TAPO_HOSTS=192.168.1.8    # optional; skips broadcast discovery
 Metering is entirely optional — without `python-kasa` installed, or without
 those variables, the plug thread never starts and climate control is unaffected.
 
+### Say which plugs are climate plugs
+
+A TP-Link account reaches every plug on it, and most of them meter something
+that has nothing to do with the house climate — a desk, a PC, a lamp. Those move
+far more than an air conditioner does, so left unfiltered the least relevant plug
+is the loudest thing on the dashboard.
+
+Name the ones that matter in `api/.env`, comma separated:
+
+```
+CLIMATE_PLUG_MACS="aa-bb-cc-dd-ee-ff,001122334455"
+```
+
+Anything not listed is dropped on sync and never shown, so it costs nothing to
+leave on the account. Unset means "accept every plug", which is what you want on
+a fresh install while working out which MAC is which. Colons, dashes and case are
+all fine — the value is normalised before comparison.
+
+Run `php artisan config:clear` after changing it.
+
 ### Keep the account small
 
 These are TP-Link *cloud* credentials, and local access requires the account

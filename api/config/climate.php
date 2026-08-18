@@ -43,4 +43,33 @@ return [
         // 'aabbccddeeff' => 'bedroom',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Which plugs are climate plugs
+    |--------------------------------------------------------------------------
+    |
+    | A TP-Link account reaches every plug on it, and most of them have nothing
+    | to do with the house climate — a desk, a PC, a lamp. Those report far more
+    | movement than an air conditioner does, so left unfiltered they are the
+    | loudest thing on the dashboard while being the least relevant.
+    |
+    | List the MACs that meter something climate-related. Anything not named
+    | here is ignored on sync and never shown, so it costs nothing to have on
+    | the account. Same normalisation as the maps above, so colons are fine.
+    |
+    | Set in api/.env, comma separated:
+    |
+    |     CLIMATE_PLUG_MACS="AC-A7-F1-88-41-40"
+    |     CLIMATE_PLUG_MACS="ACA7F1884140,001122334455"
+    |
+    | Leave it unset to accept every plug that answers, which is what a fresh
+    | install wants while you work out which MAC is which.
+    |
+    */
+
+    'plug_macs' => array_values(array_filter(array_map(
+        fn ($mac) => strtolower(preg_replace('/[^0-9a-fA-F]/', '', trim($mac))),
+        explode(',', (string) env('CLIMATE_PLUG_MACS', ''))
+    ))),
+
 ];
