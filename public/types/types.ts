@@ -87,11 +87,20 @@ export interface AirConditioner {
     mode: string;
     /** Running at all. In fan mode a unit is powered while neither heating nor cooling. */
     power_on: boolean;
+    /**
+     * What the unit itself last said, or null if nobody has asked recently.
+     * Only refreshed while a dashboard is open, so null is the resting state,
+     * and it disagreeing with power_on is the one honest sign of a lost command.
+     */
+    observed_power: boolean | null;
     fan_speed: FanSpeed;
     swing_vertical: SwingVertical;
     swing_horizontal: SwingHorizontal;
     /** Gree's own post-cooling coil dry, so the evaporator does not grow mould. */
     xfan: boolean;
+    /** Mutually exclusive, and both override fan_speed at the unit. */
+    quiet: boolean;
+    turbo: boolean;
     heating_on: boolean;
     cooling_on: boolean;
     online: boolean;

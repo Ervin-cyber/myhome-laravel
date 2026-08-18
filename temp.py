@@ -80,7 +80,8 @@ MODES = {
 
 # Device properties send_gree_command writes to. Set through apply_setting,
 # which skips anything this greeclimate build does not have.
-DEVICE_SETTINGS = ('mode', 'fan_speed', 'vertical_swing', 'horizontal_swing', 'xfan')
+DEVICE_SETTINGS = ('mode', 'fan_speed', 'vertical_swing', 'horizontal_swing', 'xfan',
+                   'quiet', 'turbo')
 
 def report_unmapped_settings():
     """
@@ -133,6 +134,11 @@ ac_loop_thread = None
 # reading, but a unit only needs a command when what we want from it changes.
 last_sent_ac_state = {}
 AC_RESEND_INTERVAL = 600  # re-assert state at least every 10 min, in case of remote-control changes
+
+# How often to offer the units their desired state again. This is not how often
+# a command is sent — needs_command still drops anything already sent within
+# AC_RESEND_INTERVAL — it is only how often that question gets asked at all.
+STATE_REASSERT_INTERVAL = 60
 
 # While a dashboard is open the API asks us to interrogate the units directly,
 # so the page shows what they actually report rather than what we last told
@@ -689,6 +695,8 @@ def desired_state(unit):
         unit.get('swing_v') or 'off',
         unit.get('swing_h') or 'off',
         bool(unit.get('xfan')),
+        bool(unit.get('quiet')),
+        bool(unit.get('turbo')),
     )
 
 def apply_setting(device, attribute, value):
@@ -723,11 +731,22 @@ async def send_gree_command(ac, desired):
 
             device.power = power_on
             if power_on:
-                _, target_temp, mode, fan_speed, swing_v, swing_h, xfan = desired
+                _, target_temp, mode, fan_speed, swing_v, swing_h, xfan, quiet, turbo = desired
 
                 apply_setting(device, 'mode', MODES.get(mode))
                 device.target_temperature = target_temp
+
+                # Order matters. Quiet and turbo both override the fan speed
+                # field at the unit, so they are cleared before the speed is
+                # written and only then set to what we actually want. Written
+                # every time, including when false: a unit still holding turbo
+                # from the handset would otherwise ignore every speed we send.
+                apply_setting(device, 'quiet', False)
+                apply_setting(device, 'turbo', False)
                 apply_setting(device, 'fan_speed', FAN_SPEEDS.get(fan_speed))
+                apply_setting(device, 'quiet', quiet)
+                apply_setting(device, 'turbo', turbo)
+
                 apply_setting(device, 'vertical_swing', VERTICAL_SWING.get(swing_v))
                 apply_setting(device, 'horizontal_swing', HORIZONTAL_SWING.get(swing_h))
 
@@ -920,16 +939,28 @@ def poll_unit_state():
                     print(f"[{unit.get('ip')}] live poll failed: {type(exc).__name__}")
                     continue
 
-                if device.current_temperature is None:
-                    continue
+                actual_power = bool(device.power)
 
+                # The only reading in the system that describes the hardware
+                # rather than our intent, so it is reported even when the unit
+                # has no temperature to offer.
                 observed.append({
                     'mac': unit['mac'],
                     'name': unit.get('name') or unit['mac'],
                     'ip': unit.get('ip'),
                     'port': unit.get('port') or 7000,
                     'reported_temp': device.current_temperature,
+                    'reported_power': actual_power,
                 })
+
+                # Someone reached the unit past us — the IR remote, a command
+                # that never landed, a power blip. Dropping the cached desired
+                # state makes the next re-assert tick treat it as unknown and
+                # command it again, rather than waiting out AC_RESEND_INTERVAL.
+                if actual_power != bool(unit.get('power')):
+                    print(f"[{unit.get('ip')}] drifted: unit says power={actual_power}, "
+                          f"we asked for {bool(unit.get('power'))}. Re-asserting.")
+                    last_sent_ac_state.pop(unit['mac'], None)
 
         return observed
 
@@ -947,6 +978,32 @@ def live_poller():
 
         if time.time() < live_until:
             poll_unit_state()
+
+def state_reasserter():
+    """
+    Offer the units their desired state again, on a timer.
+
+    execute_control only runs when the control document *changes*, so in a
+    settled house nothing ever reaches the units — which is exactly when one
+    switched off at the handset, or dropped by a brief outage, needs putting
+    back. Without this the AC_RESEND_INTERVAL rule in needs_command is
+    unreachable: a unit could sit off for hours while the dashboard, which
+    records intent rather than observation, went on showing it as running.
+
+    Cheap by construction. needs_command still drops every unit already in the
+    state we last sent it, so this costs no LAN traffic until the resend
+    interval has actually elapsed.
+    """
+    while True:
+        time.sleep(STATE_REASSERT_INTERVAL)
+
+        if failsafe_tripped or not last_control:
+            continue
+
+        try:
+            apply_units(last_control.get('units', []))
+        except Exception as exc:
+            print(f"State re-assert failed: {type(exc).__name__}: {exc}")
 
 def control_watchdog():
     """
@@ -1082,6 +1139,7 @@ if __name__ == '__main__':
         report_unmapped_settings()
         threading.Thread(target=control_watchdog, name="control-watchdog", daemon=True).start()
         threading.Thread(target=live_poller, name="live-poller", daemon=True).start()
+        threading.Thread(target=state_reasserter, name="state-reasserter", daemon=True).start()
 
         if kasa and TAPO_EMAIL and TAPO_PASSWORD:
             threading.Thread(target=plug_poller, name="plug-poller", daemon=True).start()

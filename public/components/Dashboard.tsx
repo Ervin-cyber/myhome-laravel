@@ -27,6 +27,7 @@ export default function Dashboard(): JSX.Element {
         togglePower,
         updateAcState,
         updateRoomState,
+        runRoom,
     } = useThermostat();
 
     const { heating, cooling, mode, enabled, lastUpdated, airConditioners, rooms, smartPlugs } = data;
@@ -115,6 +116,7 @@ export default function Dashboard(): JSX.Element {
                                 pendingAcIds={pendingAcIds}
                                 onUpdateRoom={updateRoomState}
                                 onUpdateAc={updateAcState}
+                                onRunRoom={runRoom}
                             />
                         ))}
                     </div>

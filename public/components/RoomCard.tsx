@@ -15,6 +15,7 @@ interface Props {
     pendingAcIds: number[];
     onUpdateRoom: (roomId: number, body: Partial<Room>) => void;
     onUpdateAc: (acId: number, body: Partial<AirConditioner>) => void;
+    onRunRoom: (roomId: number, on: boolean) => void;
 }
 
 const BOOSTS = [15, 30, 60];
@@ -40,7 +41,7 @@ function summariseUnits(units: AirConditioner[]): { title: string; detail: strin
         const fan = FAN_SPEEDS.find((f) => f.value === ac.fan_speed)?.label ?? ac.fan_speed;
 
         if (!ac.online) return { title: ac.name, detail: 'offline', warn: true };
-        if (!ac.enabled) return { title: ac.name, detail: 'switched off', warn: true };
+        if (!ac.enabled) return { title: ac.name, detail: 'parked', warn: true };
 
         return { title: ac.name, detail: `fan ${fan.toLowerCase()}`, warn: false };
     }
@@ -73,6 +74,7 @@ export default function RoomCard({
     pendingAcIds,
     onUpdateRoom,
     onUpdateAc,
+    onRunRoom,
 }: Props): JSX.Element {
     const [showUnits, setShowUnits] = useState(false);
 
@@ -81,6 +83,17 @@ export default function RoomCard({
     const units = room.air_conditioners ?? [];
     const summary = summariseUnits(units);
     const stale = isStale(room.current_temp_at);
+
+    // A room with its own sensor still has a second opinion in the unit's
+    // intake sensor, and the two rarely agree — a Gree sits high on the wall in
+    // its own return air and reads warm. Worth showing, but quietly: it is not
+    // what the room is regulated against. Omitted where the room already reads
+    // from the unit, since that would print the same number twice.
+    const unitReadings = room.temp_source === 'ac'
+        ? []
+        : units
+            .filter((ac) => ac.calibrated_temp !== null)
+            .sort((a, b) => Date.parse(b.reported_at ?? '') - Date.parse(a.reported_at ?? ''));
 
     // A radiator-only room has nothing for its unit to do in winter, and a room
     // with no unit at all has no airflow settings worth showing.
@@ -115,11 +128,14 @@ export default function RoomCard({
                     </span>
                 </div>
 
+                {/* Runs the room outright: the API also switches the house on
+                    and revives any parked unit, so one press is always enough.
+                    Switching off releases this room only. */}
                 <button
-                    onClick={() => onUpdateRoom(room.id, { enabled: !room.enabled })}
+                    onClick={() => onRunRoom(room.id, !active)}
                     disabled={isPending}
-                    aria-label={room.enabled ? `Switch ${room.name} off` : `Switch ${room.name} on`}
-                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-all active:scale-95 disabled:opacity-50 ${room.enabled ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-500'}`}
+                    aria-label={active ? `Switch ${room.name} off` : `Run ${room.name} now`}
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-all active:scale-95 disabled:opacity-50 ${active ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-500'}`}
                 >
                     <PowerSettingsNewIcon sx={{ fontSize: 26 }} />
                 </button>
@@ -135,6 +151,17 @@ export default function RoomCard({
                         {room.temp_source === 'ac' ? 'from the unit' : 'room sensor'}
                         <span className={stale ? 'text-amber-600/80' : ''}> · {formatAge(room.current_temp_at)}</span>
                     </p>
+
+                    {unitReadings.map((ac) => (
+                        <p key={ac.id} className="mt-0.5 text-xs text-gray-600">
+                            <span className="font-mono">{ac.calibrated_temp?.toFixed(1)}°C</span>
+                            {' at '}
+                            {units.length > 1 ? ac.name : 'the unit'}
+                            <span className={isStale(ac.reported_at) ? 'text-amber-700/70' : ''}>
+                                {' · '}{formatAge(ac.reported_at)}
+                            </span>
+                        </p>
+                    ))}
                 </div>
 
                 <div className="flex items-center gap-2">

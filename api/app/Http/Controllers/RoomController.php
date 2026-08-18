@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Events\LiveReadingCreated;
 use App\Models\Room;
+use App\Models\SystemState;
 use App\Services\ClimateService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -31,6 +32,58 @@ class RoomController extends Controller
             'live_until' => ClimateService::requestLiveData(),
             'window' => ClimateService::LIVE_WINDOW_SECONDS,
         ]);
+    }
+
+    /**
+     * Run this room now, opening every gate between the press and cold air.
+     *
+     * A unit only runs when the house is on, the room is on and the unit itself
+     * is enabled. The room switch used to write the middle one alone, so it
+     * could sit lit while nothing happened, with no indication of which of the
+     * other two was holding it shut. This settles all three in one write.
+     *
+     * Switching a room off stays local: it releases the room and nothing else,
+     * because stopping one room must never stop the house.
+     *
+     * The house heat/cool decision is deliberately untouched. It is seasonal
+     * and shared, and a room button that flipped it would have one room
+     * silently undo the other.
+     */
+    public function run(Request $request, $id)
+    {
+        $room = Room::with('airConditioners')->findOrFail($id);
+
+        $on = $request->boolean('on', true);
+
+        $room->enabled = $on;
+
+        // Off means off. A boost outranks the house switch by design, so
+        // leaving it standing here would have the button turn the room off and
+        // the room carry on regardless.
+        if (! $on) {
+            $room->hvac_until = 0;
+        }
+
+        if ($room->isDirty()) {
+            $room->save();
+        }
+
+        if ($on) {
+            $state = SystemState::first();
+
+            if ($state && ! $state->enabled) {
+                $state->enabled = true;
+                $state->save();
+            }
+
+            // Also the only route back for a unit parked while the toggle for
+            // it was still on screen, now that the dashboard no longer shows one.
+            $room->airConditioners()->where('enabled', false)->update(['enabled' => true]);
+        }
+
+        event(new LiveReadingCreated(null));
+
+        return response()->json($room->fresh('airConditioners'));
     }
 
     public function update(Request $request, $id)
