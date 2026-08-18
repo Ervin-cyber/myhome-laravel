@@ -23,7 +23,7 @@ class SystemStateController extends Controller
             ...($state?->toArray() ?? []),
             'rooms' => Room::with('airConditioners')->orderBy('sort_order')->get(),
             'air_conditioners' => AirConditioner::orderBy('id')->get(),
-            'smart_plugs' => SmartPlug::orderBy('id')->get(),
+            'smart_plugs' => SmartPlug::climate(),
         ], 200);
     }
 

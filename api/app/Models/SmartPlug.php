@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -48,6 +49,50 @@ class SmartPlug extends Model
     public function room(): BelongsTo
     {
         return $this->belongsTo(Room::class);
+    }
+
+    /**
+     * Every plug worth showing, already filtered.
+     *
+     * The one way to read plugs for display. There is more than one route to
+     * the dashboard — the REST endpoint and the broadcast payload — and a
+     * filter applied to only one of them is not a filter at all.
+     */
+    public static function climate(): Collection
+    {
+        return static::orderBy('id')->get()->filter->isClimate()->values();
+    }
+
+    public function isClimate(): bool
+    {
+        return static::macIsClimate($this->mac);
+    }
+
+    /**
+     * Whether a MAC meters something climate-related, per climate.plug_macs.
+     *
+     * An empty list means "no opinion" and everything passes, which is what a
+     * fresh install wants: filtering by a MAC nobody has looked up yet would
+     * hide the very devices you are trying to identify.
+     */
+    public static function macIsClimate(?string $mac): bool
+    {
+        $allowed = config('climate.plug_macs', []);
+
+        if (empty($allowed)) {
+            return true;
+        }
+
+        return in_array(
+            static::normaliseMac((string) $mac),
+            array_map(fn ($entry) => static::normaliseMac((string) $entry), $allowed),
+            true
+        );
+    }
+
+    private static function normaliseMac(string $mac): string
+    {
+        return strtolower(preg_replace('/[^0-9a-fA-F]/', '', $mac));
     }
 
     /**

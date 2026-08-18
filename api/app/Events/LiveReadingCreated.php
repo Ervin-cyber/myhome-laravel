@@ -40,7 +40,7 @@ class LiveReadingCreated implements ShouldBroadcastNow
             'set_temp' => $systemState?->target_temp,
             'hvac_until' => $systemState?->hvac_until,
             'rooms' => Room::with('airConditioners')->orderBy('sort_order')->get(),
-            'smart_plugs' => SmartPlug::orderBy('id')->get(),
+            'smart_plugs' => SmartPlug::climate(),
             // Explicit column list: last_seen_at and the model timestamps change on
             // every discovery scan and would otherwise churn this payload, which the
             // Pi diffs to decide whether to re-issue commands.
@@ -59,12 +59,18 @@ class LiveReadingCreated implements ShouldBroadcastNow
                 'swing_vertical',
                 'swing_horizontal',
                 'xfan',
+                'quiet',
+                'turbo',
                 'heating_on',
                 'cooling_on',
                 'online',
                 'reported_temp',
                 'reported_at',
                 'calibration_offset',
+                // Both, or the observed_power accessor silently reads null off
+                // an unloaded column and every unit looks like it agrees with us.
+                'observed_power_on',
+                'observed_at',
             ]),
         ];
     }
