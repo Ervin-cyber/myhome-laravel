@@ -38,7 +38,18 @@ Metering is entirely optional — without `python-kasa` installed, or without
 those variables, the plug thread never starts and climate control is unaffected.
 
 Run `python3 check_tapo.py [ip]` on the Pi to diagnose; it reports each stage
-separately.
+separately. A working P110 looks like this:
+
+```
+model   : 'P110'
+modules : ['AutoOff', 'Cloud', 'DeviceModule', 'Energy', ...]
+energy.current_consumption = 2.309      # watts, now
+energy.consumption_today   = 0.027      # kWh so far today
+```
+
+Note the draw: a couple of watts is both air conditioners sitting idle. A
+running compressor is several hundred, which is what makes the reading usable
+as a check that a command actually reached the hardware.
 
 ### Two failures worth telling apart
 
@@ -56,7 +67,9 @@ device rejected the challenge hash. This is credentials, and it is worth
 confirming with a second library before touching the hardware: if both
 python-kasa and `tapo` say the same thing, the fault is not in either.
 
-**The credentials must belong to the account that owns the device.** Local
+**The credentials must belong to the account that owns the device.** This is by
+far the most likely cause, and the one that survives every amount of retyping.
+Local
 access works by the device holding a hash derived from the email and password it
 was provisioned with. An account the device has merely been *shared* with
 controls it perfectly well in the app — that goes through the cloud — but can
