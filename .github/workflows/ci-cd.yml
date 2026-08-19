@@ -3,10 +3,10 @@ name: CI / CD
 on:
   push:
     branches:
-      - main
+      - prod
   pull_request:
     branches:
-      - main
+      - prod
   workflow_dispatch:
     inputs:
       force_build:
@@ -92,7 +92,7 @@ jobs:
     needs: [changes, test-api]
     if: |
       always() &&
-      github.ref == 'refs/heads/main' &&
+      github.ref == 'refs/heads/prod' &&
       (needs.changes.outputs.api == 'true' || github.event.inputs.force_build == 'true') &&
       (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
     runs-on: self-hosted
@@ -123,7 +123,7 @@ jobs:
     needs: [changes, test-frontend]
     if: |
       always() &&
-      github.ref == 'refs/heads/main' &&
+      github.ref == 'refs/heads/prod' &&
       (needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build == 'true') &&
       (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped')
     runs-on: self-hosted
