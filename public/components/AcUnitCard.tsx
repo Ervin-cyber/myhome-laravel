@@ -19,6 +19,23 @@ const selectClass = 'min-h-[2.75rem] w-full rounded-lg bg-gray-900/60 px-2 text-
  * three-way choice is the only shape that cannot express a state the hardware
  * refuses.
  */
+/**
+ * The unit's own value for a setting, in the same words the control uses.
+ *
+ * A raw 'fixed_middle_low' would be honest and useless; it has to read like the
+ * option you would have picked, or the two cannot be compared at a glance.
+ */
+function observedLabel(field: SettableField, value: string | number | boolean): string {
+    if (typeof value === 'boolean') return value ? 'on' : 'off';
+
+    const options = field === 'fan_speed' ? FAN_SPEEDS
+        : field === 'swing_vertical' ? SWING_VERTICAL
+            : field === 'swing_horizontal' ? SWING_HORIZONTAL
+                : [];
+
+    return options.find((option) => option.value === value)?.label ?? String(value);
+}
+
 const FAN_PROFILES = [
     { key: 'normal', label: 'Normal', body: { quiet: false, turbo: false } },
     { key: 'quiet', label: 'Quiet', body: { quiet: true, turbo: false } },
@@ -56,20 +73,26 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
     const fanSpeedLocked = ac.quiet || ac.turbo;
 
     /**
-     * Flags a setting the unit is not actually holding.
+     * What the unit actually has, when that is not what the control below says.
      *
-     * Deliberately not worded as a failure. Before the settle window is up the
-     * command may simply still be travelling; after it, the cause could equally
-     * be a lost command or somebody at the handset, and this cannot tell those
-     * apart. "Not applied" is the part that is true either way, and the Pi goes
-     * on re-asserting, so it can still clear itself.
+     * Says the value rather than that there is a difference. "Not applied" told
+     * you something was wrong and left you to go and find out what; the setpoint
+     * has always named the unit's own figure, and there is no reason for the
+     * rest of the settings to be coyer about it.
+     *
+     * Before the settle window is up the command may still be travelling, and
+     * naming a value then would only be quoting a number about to change.
      */
     const note = (field: SettableField) => {
-        if (!(field in ac.divergence)) return null;
+        const actual = ac.divergence[field];
 
-        return ac.divergence_settled
-            ? <span className="ml-1 normal-case text-amber-500/90">not applied</span>
-            : <span className="ml-1 normal-case text-gray-500">sending…</span>;
+        if (actual === undefined) return null;
+
+        if (!ac.divergence_settled) {
+            return <span className="ml-1 normal-case text-gray-500">sending…</span>;
+        }
+
+        return <span className="ml-1 normal-case text-violet-300">unit: {observedLabel(field, actual)}</span>;
     };
 
     return (

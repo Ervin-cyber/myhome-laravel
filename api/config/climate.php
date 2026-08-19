@@ -67,6 +67,33 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | How far past its setpoint a room goes before its unit is cut
+    |--------------------------------------------------------------------------
+    |
+    | In °C. A room asking to be cooled to 24 and sitting at 21 has nothing left
+    | for its unit to do, so we stop handing it the room.
+    |
+    | Set to "off" to stop deciding this at all. The unit then keeps power for
+    | as long as its room is on, and its own inverter does the regulating from
+    | the setpoint and mode we give it -- which is what it is for, and better at
+    | than we are from outside. Worth choosing when a room sensor sits in the
+    | unit's own airflow: it reads the discharge rather than the room, and cuts
+    | the unit on a temperature nobody in the room is feeling.
+    |
+    |     CLIMATE_IDLE_MARGIN=off      # never cut on temperature
+    |     CLIMATE_IDLE_MARGIN=3        # more slack before cutting
+    |
+    | Rooms that read their temperature from the unit are exempt either way:
+    | they go blind the moment it stops, so they are never cut on temperature.
+    |
+    */
+
+    'idle_margin' => in_array(strtolower((string) env('CLIMATE_IDLE_MARGIN', '')), ['off', 'false', 'none'], true)
+        ? null
+        : (float) (env('CLIMATE_IDLE_MARGIN') ?: 2.0),
+
     'plug_macs' => array_values(array_filter(array_map(
         fn ($mac) => strtolower(preg_replace('/[^0-9a-fA-F]/', '', trim($mac))),
         explode(',', (string) env('CLIMATE_PLUG_MACS', ''))

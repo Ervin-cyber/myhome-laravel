@@ -159,6 +159,17 @@ export default function RoomCard({
         : null;
 
     const askedMode = room.mode_override ?? (houseMode === 'heating' ? 'heat' : 'cool');
+
+    // A setpoint changed at the remote is not a fault and is not corrected, so
+    // without saying it here the number on this card would simply be wrong and
+    // nothing would ever admit it. Skipped in fan mode, where a Gree reports a
+    // setpoint it is not using, and only for units actually running.
+    const actualTarget = askedMode === 'fan'
+        ? undefined
+        : units
+            .filter((ac) => ac.observed_power && ac.observed_state?.target_temp != null)
+            .map((ac) => ac.observed_state!.target_temp!)
+            .find((target) => target !== Math.round(room.target_temp));
     const actualMode = units
         .filter((ac) => ac.observed_power && ac.observed_state?.mode)
         .map((ac) => ac.observed_state!.mode!)
@@ -263,6 +274,9 @@ export default function RoomCard({
                     <div className="w-16 text-center">
                         <span className="font-mono text-2xl text-white">{shownTarget}</span>
                         <span className="block text-[10px] uppercase tracking-wide text-gray-500">Target</span>
+                        {actualTarget !== undefined && (
+                            <span className="block text-[10px] text-violet-300">unit: {actualTarget}°</span>
+                        )}
                     </div>
                     <button
                         onClick={() => setTarget(shownTarget + step)}

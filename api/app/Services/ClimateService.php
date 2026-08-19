@@ -33,6 +33,22 @@ class ClimateService
     public const IDLE_MARGIN = 2.0;
 
     /**
+     * The configured margin, or null when we are not to decide this at all.
+     *
+     * Null hands the whole question to the unit: it keeps power while its room
+     * is on, and regulates itself from the setpoint and mode we give it. That
+     * is a legitimate way to run the system rather than a degraded one -- an
+     * inverter is better at holding a room than we are from outside, and it
+     * cannot be fooled by a sensor sitting in its own discharge air.
+     */
+    private function idleMargin(): ?float
+    {
+        $configured = config('climate.idle_margin', self::IDLE_MARGIN);
+
+        return $configured === null ? null : (float) $configured;
+    }
+
+    /**
      * A compressor that is restarted immediately after stopping will fail
      * early, so a unit stays off for at least this long once switched off.
      */
@@ -267,13 +283,20 @@ class ClimateService
      */
     private function isBeyondReach(?float $temp, float $target, string $unitMode): bool
     {
+        $margin = $this->idleMargin();
+
+        // Configured off: the unit keeps its room and regulates itself.
+        if ($margin === null) {
+            return false;
+        }
+
         if (! $this->isPlausible($temp)) {
             return false;
         }
 
         return $unitMode === 'cool'
-            ? $temp < ($target - self::IDLE_MARGIN)
-            : $temp > ($target + self::IDLE_MARGIN);
+            ? $temp < ($target - $margin)
+            : $temp > ($target + $margin);
     }
 
     /**

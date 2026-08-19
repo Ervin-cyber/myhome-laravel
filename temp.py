@@ -211,6 +211,12 @@ LIVE_READ_TIMEOUT = 2.0
 # read as somebody's own doing rather than as our command still travelling.
 MANUAL_SETTLE_SECONDS = 30
 
+# A reading that contradicts us has to say so twice before it is believed,
+# keyed by MAC. One bad answer -- a truncated reply, a unit mid-restart -- would
+# otherwise be adopted as the household's intent and switch a room off on
+# nobody's authority, which is a lot of consequence to hang on a single packet.
+pending_manual = {}
+
 # Tapo metering plugs, keyed by MAC for the same reason the ACs are. Unlike the
 # units these are polled even with nobody watching, because consumption is the
 # only signal that says whether a command actually reached the hardware.
@@ -235,6 +241,13 @@ last_control_at = 0
 last_control = None
 CONTROL_TIMEOUT = 300
 WATCHDOG_INTERVAL = 30
+
+# How old the control document may get before it is pulled again rather than
+# waited for. Well inside CONTROL_TIMEOUT on purpose: the sensor that drives
+# broadcasts reports about every five minutes, so waiting for one put the
+# fail-safe permanently on the edge of tripping and left clock-driven decisions
+# up to a reading late.
+CONTROL_REFRESH_INTERVAL = 60
 failsafe_tripped = False
 boiler_on = False
 
@@ -1092,22 +1105,39 @@ def manual_power_change(unit, state):
     Returns True or False for what the person chose, or None for "no evidence",
     which is not the same as False and must not be reported as one.
     """
-    previous = last_sent_ac_state.get(unit.get('mac'))
+    mac = unit.get('mac')
+    previous = last_sent_ac_state.get(mac)
 
     if previous is None:
+        pending_manual.pop(mac, None)
         return None
 
     sent, sent_at = previous
 
     if time.time() - sent_at < MANUAL_SETTLE_SECONDS:
+        pending_manual.pop(mac, None)
         return None
 
     theirs = state.get('power')
 
     if theirs is None or bool(sent[0]) == bool(theirs):
+        # Agrees with us, so whatever we were waiting to confirm is moot.
+        pending_manual.pop(mac, None)
         return None
 
-    return bool(theirs)
+    theirs = bool(theirs)
+
+    # Believed on the second read that says the same thing. A person leaves the
+    # unit switched, so the answer stays put; a bad packet does not.
+    if pending_manual.get(mac) != theirs:
+        pending_manual[mac] = theirs
+        print(f"[{unit.get('ip')}] reads power={theirs} against our {bool(sent[0])}; "
+              f"waiting for a second read before following it.")
+        return None
+
+    pending_manual.pop(mac, None)
+
+    return theirs
 
 def poll_unit_state():
     """
@@ -1326,7 +1356,13 @@ def control_watchdog():
         expires_at = (last_control or {}).get('expires_at') or 0
         stale = age > CONTROL_TIMEOUT or (expires_at and time.time() > expires_at)
 
-        if not stale and not failsafe_tripped:
+        # Refreshed long before it goes stale. Broadcasts follow sensor
+        # readings and nothing else, so anything the API decides on a clock --
+        # a boost ending -- waited for the next reading to be noticed. At one
+        # reading every five minutes that made a thirty-minute timer stop at
+        # thirty-five, which is not a timer. Costs one local request a minute,
+        # and commands nothing: needs_command still reads the unit first.
+        if not stale and not failsafe_tripped and age < CONTROL_REFRESH_INTERVAL:
             continue
 
         # Silence is not evidence that the API is dead. Broadcasts are driven
@@ -1342,7 +1378,12 @@ def control_watchdog():
             execute_control(control)
             continue
 
-        if not failsafe_tripped:
+        # Only once the document is genuinely stale. Most calls here are the
+        # routine minute refresh, and one of those going unanswered is a missed
+        # refresh -- there are four more before the document times out, and
+        # cutting the house off on the first would be failing safe at the first
+        # dropped packet rather than at the loss of control it stands for.
+        if not failsafe_tripped and stale:
             reason = ("control document expired" if not age > CONTROL_TIMEOUT
                       else f"no control document for {int(age)}s")
             fail_safe(f"{reason} and the API did not answer")
