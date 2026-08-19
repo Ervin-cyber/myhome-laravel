@@ -65,6 +65,11 @@ class AirConditionerController extends Controller
             if (! empty($device['reported_state'])) {
                 $ac->observed_state = $this->knownObservationKeys($device['reported_state']);
                 $ac->observed_at = now();
+
+                // The unit is the authority on its own settings, whoever
+                // changed them. Nothing here corrects it; we take what it says.
+                $ac->adoptObservedSettings();
+                $this->adoptSetpoint($ac);
             }
 
             // Unlike the observation, this changes what the unit is *for*, so
@@ -137,6 +142,51 @@ class AirConditionerController extends Controller
         ]));
     }
 
+    /**
+     * Take the room's setpoint from the unit that is holding it.
+     *
+     * The setpoint lives on the room rather than the unit, so this is the one
+     * adopted value written somewhere shared -- which is why it is fussier
+     * about when it will do it.
+     */
+    private function adoptSetpoint(AirConditioner $ac): void
+    {
+        $observed = $ac->freshObservation();
+
+        if ($observed === null || $ac->awaiting) {
+            return;
+        }
+
+        // Only a running unit knows its setpoint. An idle Gree reports whatever
+        // it was last left with, and in fan mode one it is not using -- which
+        // is also why the stored value is worth keeping: it is what the unit
+        // gets started with next time, by whoever starts it.
+        if (empty($observed['power']) || ($observed['mode'] ?? null) === 'fan') {
+            return;
+        }
+
+        $target = $observed['target_temp'] ?? null;
+        $room = $ac->room;
+
+        if ($target === null || ! $room || (float) $room->target_temp === (float) $target) {
+            return;
+        }
+
+        // One room, one setpoint, so a second running unit would have us
+        // alternating between two answers forever. With one, the unit is simply
+        // telling us what the room is set to.
+        $others = $room->airConditioners()
+            ->where('id', '!=', $ac->id)
+            ->get()
+            ->filter(fn (AirConditioner $other) => $other->observed_power);
+
+        if ($others->isNotEmpty()) {
+            return;
+        }
+
+        $room->forceFill(['target_temp' => (float) $target])->save();
+    }
+
     public function update(Request $request, $id)
     {
         $ac = AirConditioner::findOrFail($id);
@@ -177,12 +227,16 @@ class AirConditionerController extends Controller
 
         $previousRoomId = $ac->getOriginal('room_id');
 
-        // Stamped only for the settings a person chooses, so the dashboard can
-        // tell "asked for, not applied yet" from "asked for a while ago and it
-        // never took". A room reassignment or a rename is not a command to the
-        // hardware and must not restart that clock.
-        if ($ac->isDirty(['fan_speed', 'swing_vertical', 'swing_horizontal', 'xfan', 'quiet', 'turbo'])) {
-            $ac->settings_changed_at = now();
+        // The one thing that makes the Pi speak to a unit. It commands when
+        // this moves and at no other time, so a reading can never become an
+        // instruction and a handset change is never argued with.
+        if ($ac->isDirty(array_keys(AirConditioner::ADOPTED))) {
+            $ac->commanded_at = now();
+
+            // A fresh ask on these, so last time's verdict no longer applies.
+            $ac->rejected_settings = array_values(
+                array_diff($ac->rejected, array_keys($ac->getDirty()))
+            ) ?: null;
         }
 
         // Touching this unit in the app is the gesture that asks for automatic

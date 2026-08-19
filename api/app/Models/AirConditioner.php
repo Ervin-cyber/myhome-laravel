@@ -33,7 +33,8 @@ class AirConditioner extends Model
         'power_changed_at',
         'observed_state',
         'observed_at',
-        'settings_changed_at',
+        'commanded_at',
+        'rejected_settings',
         'manual_power',
         'manual_since',
     ];
@@ -49,23 +50,24 @@ class AirConditioner extends Model
     public const OBSERVED_FRESH_SECONDS = 180;
 
     /**
-     * How long a command gets to land before a unit still disagreeing is
-     * called a fault rather than a request in flight.
+     * How long a command has to land before we believe the unit over ourselves.
      *
-     * Long enough for the re-assert to have had a second go: it runs every
-     * STATE_REASSERT_INTERVAL and a live poll drops the cached state the
-     * moment it sees a disagreement, so a retry follows within about a minute.
+     * Until it elapses the unit is still reporting what it held a moment ago,
+     * and adopting that would undo the press that was just made. After it, the
+     * unit has had its say and is simply right.
      */
-    public const SETTLE_SECONDS = 120;
+    public const SETTLE_SECONDS = 90;
 
     /**
      * Settings a person chooses, mapped to the key the unit reports them under.
      *
-     * Power, mode and setpoint are absent on purpose. Those are decided by the
-     * control loop from room temperature and the house mode, so they change
-     * without anybody touching them and disagreeing about one is not a fault.
+     * These are adopted from the unit: whatever it says it is doing becomes
+     * what this row says, whether the change came from here, the handset or the
+     * Gree app. Power, mode and setpoint are absent because they are not
+     * per-unit preferences -- power is the control loop's, mode is the house's,
+     * and the setpoint belongs to the room.
      */
-    private const COMPARABLE = [
+    public const ADOPTED = [
         'fan_speed' => 'fan_speed',
         'swing_vertical' => 'swing_v',
         'swing_horizontal' => 'swing_h',
@@ -95,12 +97,13 @@ class AirConditioner extends Model
         'power_changed_at' => 'datetime',
         'observed_state' => 'array',
         'observed_at' => 'datetime',
-        'settings_changed_at' => 'datetime',
+        'commanded_at' => 'datetime',
+        'rejected_settings' => 'array',
         'manual_power' => 'boolean',
         'manual_since' => 'datetime',
     ];
 
-    protected $appends = ['calibrated_temp', 'observed_power', 'divergence', 'divergence_settled', 'following_remote'];
+    protected $appends = ['calibrated_temp', 'observed_power', 'following_remote', 'awaiting', 'rejected'];
 
     public function room(): BelongsTo
     {
@@ -172,69 +175,79 @@ class AirConditioner extends Model
     }
 
     /**
-     * Settings where the unit disagrees with us, and what it has instead.
+     * Whether a command is still on its way to this unit.
      *
-     * Empty is the normal case and also what a stale observation returns: with
-     * nothing recent to compare against, silence is the only honest answer.
-     *
-     * @return array<string, mixed>
+     * Purely a matter of time. Nothing confirms a command -- the unit is asked
+     * what it is doing on its own schedule -- so this is the window in which we
+     * decline to believe an observation over a press that has just been made.
      */
-    public function getDivergenceAttribute(): array
+    public function getAwaitingAttribute(): bool
+    {
+        return $this->commanded_at !== null
+            && $this->commanded_at->diffInSeconds(now()) < self::SETTLE_SECONDS;
+    }
+
+    /**
+     * Settings whose last command the unit did not take.
+     *
+     * Nothing retries, so a rejected change reverts to what the unit actually
+     * has. That is correct and completely silent, and without this it is
+     * indistinguishable from never having pressed the button at all.
+     *
+     * @return array<int, string>
+     */
+    public function getRejectedAttribute(): array
+    {
+        return array_values(array_filter(
+            (array) ($this->rejected_settings ?? []),
+            fn ($field) => array_key_exists($field, self::ADOPTED)
+        ));
+    }
+
+    /**
+     * Take on what the unit says about itself.
+     *
+     * The unit is the authority on every setting in ADOPTED, whoever changed
+     * it. A value we asked for and did not get is recorded as rejected on the
+     * way past -- that is the only trace left of a command, since nothing
+     * retries one.
+     *
+     * Does nothing while a command may still be travelling, when the unit is
+     * still truthfully reporting what it held a second ago.
+     */
+    public function adoptObservedSettings(): void
     {
         $observed = $this->freshObservation();
 
-        if ($observed === null) {
-            return [];
+        if ($observed === null || $this->awaiting) {
+            return;
         }
 
-        // Settings are only ever written to a running unit -- send_gree_command
-        // sets power and stops there when switching off -- so a unit that is
-        // off still holds whatever it was last left with. Comparing against
-        // that would mark every switched-off unit as having failed to take a
-        // command nobody sent it.
-        if (! $this->power_on || ! ($observed['power'] ?? false)) {
-            return [];
-        }
+        $rejected = $this->rejected;
 
-        $diverged = [];
-
-        foreach (self::COMPARABLE as $ours => $theirs) {
-            // A unit under quiet or turbo picks its own fan speed and reports
-            // that, so comparing it would report a fault against every unit
-            // doing exactly what it was asked.
-            if ($ours === 'fan_speed' && ($this->quiet || $this->turbo)) {
-                continue;
-            }
-
+        foreach (self::ADOPTED as $ours => $theirs) {
             if (! array_key_exists($theirs, $observed) || $observed[$theirs] === null) {
                 continue;
             }
 
-            $mine = $this->{$ours};
-            $its = is_bool($mine) ? (bool) $observed[$theirs] : $observed[$theirs];
+            $its = is_bool($this->{$ours}) ? (bool) $observed[$theirs] : $observed[$theirs];
 
-            if ($mine !== $its) {
-                $diverged[$ours] = $its;
+            if ($this->{$ours} === $its) {
+                // It holds what we last asked for, so nothing outstanding.
+                $rejected = array_values(array_diff($rejected, [$ours]));
+
+                continue;
             }
+
+            // Only a command can have been refused. Without one this is simply
+            // somebody at the handset, which is not a failure of anything.
+            if ($this->commanded_at !== null && ! in_array($ours, $rejected, true)) {
+                $rejected[] = $ours;
+            }
+
+            $this->{$ours} = $its;
         }
 
-        return $diverged;
-    }
-
-    /**
-     * Whether a disagreement has lasted long enough to be a fault rather than
-     * a command still in flight.
-     *
-     * With no recorded change, anything we see is the unit's own doing — a
-     * handset, or a setting it declined — and there is nothing in flight for
-     * it to be.
-     */
-    public function getDivergenceSettledAttribute(): bool
-    {
-        if ($this->settings_changed_at === null) {
-            return true;
-        }
-
-        return $this->settings_changed_at->diffInSeconds(now()) > self::SETTLE_SECONDS;
+        $this->rejected_settings = $rejected ?: null;
     }
 }

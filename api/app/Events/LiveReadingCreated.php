@@ -71,7 +71,8 @@ class LiveReadingCreated implements ShouldBroadcastNow
                 // unloaded columns and every unit looks like it agrees with us.
                 'observed_state',
                 'observed_at',
-                'settings_changed_at',
+                'commanded_at',
+                'rejected_settings',
                 'manual_power',
                 'manual_since',
             ]),

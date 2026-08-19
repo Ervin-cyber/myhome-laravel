@@ -175,21 +175,10 @@ ac_loop_thread = None
 plug_loop = None
 plug_loop_thread = None
 
-# Last state actually pushed to each unit, keyed by MAC: (desired, sent_at).
-# A record of our own words, and nothing more. Good only for not repeating
-# ourselves when the same document arrives twice.
+# Last state pushed to each unit, keyed by MAC: (desired, sent_at, asked_at).
+# asked_at is the dashboard's commanded_at as it stood when we spoke, and it is
+# what decides whether we speak again -- see needs_command.
 last_sent_ac_state = {}
-
-# What each unit last told us about itself, keyed by MAC: (state, read_at).
-# Kept apart from last_sent_ac_state deliberately: one is what we asked for and
-# the other is what is true, and only the second can answer whether a unit needs
-# to be spoken to. Where we have a recent reading it decides, because telling a
-# unit to do what it is already doing is a beep for nothing.
-last_observed_ac_state = {}
-
-# How long a reading is trusted to still describe the unit. Both readers run at
-# least this often, so in practice one is nearly always in hand.
-OBSERVATION_TRUSTED_SECONDS = 90
 
 # How often the units are read, so the dashboard knows what they are doing even
 # with nobody watching. Reading only: nothing is commanded on a timer, because a
@@ -867,12 +856,7 @@ async def send_gree_command(ac, desired):
             await asyncio.wait_for(device.push_state_update(), timeout=5.0)
             print(f"[{ip}] Gree command SUCCESSFUL: {desired}")
 
-            last_sent_ac_state[mac] = (desired, time.time())
-
-            # The unit has just changed, so the last reading no longer describes
-            # it. Drop it rather than let a pre-command observation answer for
-            # the state the command produced.
-            last_observed_ac_state.pop(mac, None)
+            last_sent_ac_state[mac] = (desired, time.time(), ac.get('commanded_at'))
 
             observed = None
             if device.current_temperature is not None:
@@ -898,47 +882,45 @@ async def send_gree_command(ac, desired):
              # that no longer exists.
              GREE_DEVICES.pop(mac, None)
              last_sent_ac_state.pop(mac, None)
-             last_observed_ac_state.pop(mac, None)
 
              send_ntfy_alert(f"Gree command error ({ip}): {err_msg}", "warning", key=f"ac_cmd_{ip}")
              return None
 
 def needs_command(unit, desired):
     """
-    Whether this unit actually needs to be spoken to.
+    Whether somebody has asked us to speak to this unit.
 
-    Answered from what the unit last said about itself, whenever that answer is
-    recent enough to still hold. The unit is the only authority on what the unit
-    is doing: a command is needed when the hardware disagrees with the document,
-    not when the document differs from something we said earlier.
+    Answered from commanded_at alone -- the moment a person last asked for
+    something from the dashboard. Not from what the unit is doing, and not from
+    what we last sent it.
 
-    That distinction is the whole difference between switching a unit off in the
-    Gree app and hearing the house beep at it a minute later, and not.
+    That is the whole design. Judging by disagreement made every reading a
+    potential instruction: set Quiet on the handset, and the next document to
+    arrive found a difference and pushed our entire state back over it. The unit
+    is the authority on what it is doing, so a difference is something to adopt,
+    and the only thing that can make us speak is being asked to.
 
-    Falls back to what we last sent only when there is no fresh reading -- no
-    better information exists then, and repeating ourselves is at least bounded.
-
-    No periodic resend at all any more. A Gree chirps at every command it
-    accepts, so a timer that re-sends whether or not anything is wrong is a beep
-    in the living room, on a schedule, for nothing.
+    Power is the exception the tuple carries: the control loop owns whether a
+    unit runs, so a change there is an instruction in its own right.
     """
     mac = unit.get('mac')
-    observed = last_observed_ac_state.get(mac)
-
-    if observed is not None:
-        state, read_at = observed
-
-        if time.time() - read_at <= OBSERVATION_TRUSTED_SECONDS:
-            return bool(disagreements(unit, state))
+    asked_at = unit.get('commanded_at')
 
     previous = last_sent_ac_state.get(mac)
 
     if previous is None:
         return True
 
-    prev_desired, _ = previous
+    prev_desired, _, prev_asked_at = previous
 
-    return prev_desired != desired
+    # The dashboard asked for something since we last spoke.
+    if asked_at != prev_asked_at:
+        return True
+
+    # Nobody asked, but the room wants this unit on when it is off, or off when
+    # it is on. That is the loop's decision rather than a setting, and the only
+    # thing left that may still start a conversation.
+    return bool(prev_desired[0]) != bool(desired[0])
 
 def apply_units(units):
     """
@@ -1112,7 +1094,7 @@ def manual_power_change(unit, state):
         pending_manual.pop(mac, None)
         return None
 
-    sent, sent_at = previous
+    sent, sent_at, _ = previous
 
     if time.time() - sent_at < MANUAL_SETTLE_SECONDS:
         pending_manual.pop(mac, None)
@@ -1190,11 +1172,6 @@ def poll_unit_state():
                     'reported_temp': temperature,
                     'reported_state': state,
                 }
-
-                # Recorded before anything is decided from it. This is what the
-                # unit is, and needs_command answers from it rather than from
-                # any memory of our own commands.
-                last_observed_ac_state[unit['mac']] = (state, time.time())
 
                 manual = manual_power_change(unit, state)
 
@@ -1277,11 +1254,6 @@ def observe_units(units):
                     'reported_temp': temperature,
                     'reported_state': state,
                 }
-
-                # Recorded before anything is decided from it. This is what the
-                # unit is, and needs_command answers from it rather than from
-                # any memory of our own commands.
-                last_observed_ac_state[unit['mac']] = (state, time.time())
 
                 manual = manual_power_change(unit, state)
 
