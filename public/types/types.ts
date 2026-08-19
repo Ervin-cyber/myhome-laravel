@@ -118,13 +118,10 @@ export interface AirConditioner {
     /** The unit's own account of itself. A null field means it said something we have no word for. */
     observed_state: ObservedState | null;
     observed_at: string | null;
-    /**
-     * Settings the unit is not holding, and what it has instead. Empty when it
-     * agrees, and also when the last observation is too old to mean anything.
-     */
-    divergence: Partial<Record<SettableField, string | number | boolean>>;
-    /** False while a command may still be in flight; true once it counts as a fault. */
-    divergence_settled: boolean;
+    /** True while a command may still be travelling to the unit. */
+    awaiting: boolean;
+    /** Settings whose last command the unit did not take. Nothing retries them. */
+    rejected: SettableField[];
     /**
      * True while somebody's own switching — handset or the Gree app — outranks
      * the thermostat for this unit. Cleared by any deliberate action in the app.

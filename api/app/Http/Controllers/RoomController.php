@@ -143,6 +143,14 @@ class RoomController extends Controller
                 ->update(['manual_power' => null, 'manual_since' => null]);
         }
 
+        // The setpoint and the mode live on the room but are carried out by
+        // its units, and the Pi only speaks when it has been asked to -- so the
+        // ask has to be recorded on the units themselves or nothing reaches
+        // the hardware.
+        if ($room->isDirty(['target_temp', 'mode_override'])) {
+            $room->airConditioners()->update(['commanded_at' => now()]);
+        }
+
         // Starting a boost is "run this room now", the same sentence the room's
         // power button says, so it clears the same things out of the way. A
         // parked unit ignoring boost while answering the button above it was

@@ -158,23 +158,17 @@ export default function RoomCard({
         ? Math.max(1, Math.ceil((room.hvac_until * 1000 - now) / 60000))
         : null;
 
-    const askedMode = room.mode_override ?? (houseMode === 'heating' ? 'heat' : 'cool');
+    // Not adopted, unlike every other setting: heat vs cool is decided once
+    // for the whole house so two rooms can never fight, and taking one unit's
+    // word for it would let a handset flip the season. Said out loud instead.
+    // fan and dry never count -- they are nobody's idea of the wrong season.
+    const wrongMode = units.find((ac) => {
+        const its = ac.observed_state?.mode;
 
-    // A setpoint changed at the remote is not a fault and is not corrected, so
-    // without saying it here the number on this card would simply be wrong and
-    // nothing would ever admit it. Skipped in fan mode, where a Gree reports a
-    // setpoint it is not using, and only for units actually running.
-    const actualTarget = askedMode === 'fan'
-        ? undefined
-        : units
-            .filter((ac) => ac.observed_power && ac.observed_state?.target_temp != null)
-            .map((ac) => ac.observed_state!.target_temp!)
-            .find((target) => target !== Math.round(room.target_temp));
-    const actualMode = units
-        .filter((ac) => ac.observed_power && ac.observed_state?.mode)
-        .map((ac) => ac.observed_state!.mode!)
-        .find((mode) => mode !== askedMode);
-
+        return ac.observed_power
+            && (its === 'heat' || its === 'cool')
+            && its !== (houseMode === 'heating' ? 'heat' : 'cool');
+    });
     const unitReadings = room.temp_source === 'ac'
         ? []
         : units
@@ -274,9 +268,6 @@ export default function RoomCard({
                     <div className="w-16 text-center">
                         <span className="font-mono text-2xl text-white">{shownTarget}</span>
                         <span className="block text-[10px] uppercase tracking-wide text-gray-500">Target</span>
-                        {actualTarget !== undefined && (
-                            <span className="block text-[10px] text-violet-300">unit: {actualTarget}°</span>
-                        )}
                     </div>
                     <button
                         onClick={() => setTarget(shownTarget + step)}
@@ -302,13 +293,14 @@ export default function RoomCard({
                 <div className="mt-4">
                     <span className="text-[10px] uppercase tracking-wide text-gray-500">
                         Mode
-                        {/* The buttons show what was asked for. When the unit is
-                            in something else -- changed at the remote, or a mode
-                            it would not take -- saying so beats letting the
-                            selection quietly misdescribe the hardware. */}
-                        {actualMode && (
-                            <span className="ml-1 normal-case text-violet-300">
-                                unit is in {MODE_LABELS[actualMode] ?? actualMode}
+                        {/* Red, and not adopted. Running heat while the house
+                            says cool is the one difference worth arguing about
+                            -- it fights the other rooms -- but a room button is
+                            the wrong place to settle the season, so it is said
+                            rather than acted on. */}
+                        {wrongMode && (
+                            <span className="ml-1 normal-case text-red-400">
+                                unit is in {MODE_LABELS[wrongMode.observed_state!.mode!] ?? wrongMode.observed_state!.mode}
                             </span>
                         )}
                     </span>

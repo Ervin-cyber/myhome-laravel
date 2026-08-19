@@ -332,6 +332,10 @@ class ClimateService
             // indefinitely — which is exactly what it did.
             'quiet' => (bool) $ac->quiet,
             'turbo' => (bool) $ac->turbo,
+            // The only thing the Pi acts on. It commands when this moves and
+            // never because a reading disagreed, so a change made at the
+            // handset is adopted rather than argued with.
+            'commanded_at' => $ac->commanded_at?->timestamp,
         ];
     }
 

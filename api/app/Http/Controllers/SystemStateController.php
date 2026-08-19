@@ -48,6 +48,12 @@ class SystemStateController extends Controller
                 ->update(['manual_power' => null, 'manual_since' => null]);
         }
 
+        // Turning the season around is an instruction to every unit, and the
+        // Pi acts on being asked rather than on noticing a difference.
+        if (isset($data['mode']) && $data['mode'] !== $state->mode) {
+            AirConditioner::query()->update(['commanded_at' => now()]);
+        }
+
         if (isset($data['enabled'])) {
             $state->enabled = $data['enabled'];
         }

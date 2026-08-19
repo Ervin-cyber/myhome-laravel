@@ -19,23 +19,6 @@ const selectClass = 'min-h-[2.75rem] w-full rounded-lg bg-gray-900/60 px-2 text-
  * three-way choice is the only shape that cannot express a state the hardware
  * refuses.
  */
-/**
- * The unit's own value for a setting, in the same words the control uses.
- *
- * A raw 'fixed_middle_low' would be honest and useless; it has to read like the
- * option you would have picked, or the two cannot be compared at a glance.
- */
-function observedLabel(field: SettableField, value: string | number | boolean): string {
-    if (typeof value === 'boolean') return value ? 'on' : 'off';
-
-    const options = field === 'fan_speed' ? FAN_SPEEDS
-        : field === 'swing_vertical' ? SWING_VERTICAL
-            : field === 'swing_horizontal' ? SWING_HORIZONTAL
-                : [];
-
-    return options.find((option) => option.value === value)?.label ?? String(value);
-}
-
 const FAN_PROFILES = [
     { key: 'normal', label: 'Normal', body: { quiet: false, turbo: false } },
     { key: 'quiet', label: 'Quiet', body: { quiet: true, turbo: false } },
@@ -73,26 +56,20 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
     const fanSpeedLocked = ac.quiet || ac.turbo;
 
     /**
-     * What the unit actually has, when that is not what the control below says.
+     * What became of the last change asked for on this control.
      *
-     * Says the value rather than that there is a difference. "Not applied" told
-     * you something was wrong and left you to go and find out what; the setpoint
-     * has always named the unit's own figure, and there is no reason for the
-     * rest of the settings to be coyer about it.
-     *
-     * Before the settle window is up the command may still be travelling, and
-     * naming a value then would only be quoting a number about to change.
+     * Nothing retries, so a change the unit declined simply reverts to what it
+     * actually has -- correct, silent, and indistinguishable from never having
+     * pressed the button. This is the only thing that says otherwise.
      */
     const note = (field: SettableField) => {
-        const actual = ac.divergence[field];
-
-        if (actual === undefined) return null;
-
-        if (!ac.divergence_settled) {
+        if (ac.awaiting) {
             return <span className="ml-1 normal-case text-gray-500">sending…</span>;
         }
 
-        return <span className="ml-1 normal-case text-violet-300">unit: {observedLabel(field, actual)}</span>;
+        if (!ac.rejected.includes(field)) return null;
+
+        return <span className="ml-1 normal-case text-amber-500/90">didn&apos;t take</span>;
     };
 
     return (
@@ -124,7 +101,7 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                     the API; the room's own switch is what revives a parked unit. */}
                 <div className="flex shrink-0 items-center gap-1">
                     <span
-                        title={drifted ? 'The unit disagrees with what it was told. It will be commanded again shortly.' : undefined}
+                        title={drifted ? 'The unit is not where the room expected it. Nothing will correct it; it is being followed.' : undefined}
                         className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${status.tone}`}
                     >
                         {status.label}
