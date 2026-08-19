@@ -58,10 +58,6 @@ class AirConditionerController extends Controller
                 $ac->reported_at = now();
             }
 
-            // Deliberately not folded into the $changed check below: what the
-            // unit is doing is for the dashboard to read on its next poll, and
-            // broadcasting it would put the Pi's own observation back on the
-            // channel the Pi diffs.
             if (! empty($device['reported_state'])) {
                 $ac->observed_state = $this->knownObservationKeys($device['reported_state']);
                 $ac->observed_at = now();
@@ -69,7 +65,23 @@ class AirConditionerController extends Controller
                 // The unit is the authority on its own settings, whoever
                 // changed them. Nothing here corrects it; we take what it says.
                 $ac->adoptObservedSettings();
-                $this->adoptSetpoint($ac);
+
+                // Only when something actually moved. Broadcasting an
+                // observation used to be unthinkable -- the Pi read the
+                // document, found a difference and commanded on it, so telling
+                // it what a unit was doing was telling it to change something.
+                // It commands on being asked now, so this is just news, and
+                // waiting for the dashboard's own poll on top of the Pi's cost
+                // half a minute for something already known.
+                // Both evaluated before either is tested. Folding them into one
+                // condition lets || short-circuit, and the setpoint is then
+                // never adopted on any pass where a setting changed as well.
+                $settingsMoved = $ac->isDirty(array_keys(AirConditioner::ADOPTED));
+                $setpointMoved = $this->adoptSetpoint($ac);
+
+                if ($settingsMoved || $setpointMoved) {
+                    $changed = true;
+                }
             }
 
             // Unlike the observation, this changes what the unit is *for*, so
@@ -149,27 +161,33 @@ class AirConditionerController extends Controller
      * adopted value written somewhere shared -- which is why it is fussier
      * about when it will do it.
      */
-    private function adoptSetpoint(AirConditioner $ac): void
+    private function adoptSetpoint(AirConditioner $ac): bool
     {
         $observed = $ac->freshObservation();
 
         if ($observed === null || $ac->awaiting) {
-            return;
+            return false;
         }
 
-        // Only a running unit knows its setpoint. An idle Gree reports whatever
-        // it was last left with, and in fan mode one it is not using -- which
-        // is also why the stored value is worth keeping: it is what the unit
-        // gets started with next time, by whoever starts it.
-        if (empty($observed['power']) || ($observed['mode'] ?? null) === 'fan') {
-            return;
+        // Only a running unit knows its setpoint: an idle Gree reports whatever
+        // it was last left with, which is why the stored value is worth
+        // keeping -- it is what the unit gets started with next time, by
+        // whoever starts it.
+        //
+        // Fan mode counts. The unit is not acting on the setpoint there, but it
+        // is still holding one, and it is the one it will act on the moment the
+        // mode changes. Excluding it meant the number on the card was wrong for
+        // precisely the mode you would choose to change settings in without
+        // starting the compressor.
+        if (empty($observed['power'])) {
+            return false;
         }
 
         $target = $observed['target_temp'] ?? null;
         $room = $ac->room;
 
         if ($target === null || ! $room || (float) $room->target_temp === (float) $target) {
-            return;
+            return false;
         }
 
         // One room, one setpoint, so a second running unit would have us
@@ -181,10 +199,12 @@ class AirConditionerController extends Controller
             ->filter(fn (AirConditioner $other) => $other->observed_power);
 
         if ($others->isNotEmpty()) {
-            return;
+            return false;
         }
 
         $room->forceFill(['target_temp' => (float) $target])->save();
+
+        return true;
     }
 
     public function update(Request $request, $id)
