@@ -11,8 +11,15 @@ use Illuminate\Validation\Rule;
 
 class RoomController extends Controller
 {
-    /** Boost durations offered by the dashboard, in minutes. */
-    private const BOOST_MINUTES = [15, 30, 60];
+    /**
+     * Durations the dashboard offers, in minutes.
+     *
+     * Both sets, because the two machines are used on different timescales: a
+     * radiator top-up is a quarter of an hour, an air conditioner is put on for
+     * an evening. Which set is shown is the dashboard's business; this only has
+     * to recognise anything it might send.
+     */
+    private const BOOST_MINUTES = [15, 30, 60, 120];
 
     public function index()
     {
@@ -136,11 +143,54 @@ class RoomController extends Controller
                 ->update(['manual_power' => null, 'manual_since' => null]);
         }
 
+        // Starting a boost is "run this room now", the same sentence the room's
+        // power button says, so it clears the same things out of the way. A
+        // parked unit ignoring boost while answering the button above it was
+        // two gestures meaning one thing and behaving differently.
+        if ($room->isDirty('hvac_until') && $room->hvac_until > time()) {
+            $room->airConditioners()->where('enabled', false)->update(['enabled' => true]);
+
+            // The same button means two things, because the two machines are
+            // used differently. On the boiler it is "heat for fifteen more
+            // minutes", and the room goes back to its thermostat afterwards. On
+            // an air conditioner it is a run timer: fifteen minutes and then
+            // off.
+            //
+            // Clearing `enabled` is the whole mechanism. is_boosting holds the
+            // room active for the duration on its own, so when it lapses there
+            // is nothing left keeping the room on and it stops.
+            if ($this->boostIsATimer($room)) {
+                $room->enabled = false;
+            }
+        }
+
         $room->save();
 
         event(new LiveReadingCreated(null));
 
         return response()->json($room->fresh('airConditioners'));
+    }
+
+    /**
+     * Whether a boost on this room ends with the room off.
+     *
+     * True when an air conditioner is what would answer it. Radiators are used
+     * to top a room up and leave it under its thermostat; a split is put on for
+     * a while and then wanted off, and expecting one button to be read both
+     * ways is what made a fifteen-minute boost run indefinitely.
+     */
+    private function boostIsATimer(Room $room): bool
+    {
+        if (! $room->airConditioners()->exists()) {
+            return false;
+        }
+
+        $houseMode = SystemState::first()?->mode ?? 'heating';
+
+        // heat, unless the room has overridden to dry or fan, or it is summer.
+        $unitMode = $room->unitMode($houseMode);
+
+        return $unitMode !== 'heat' || $room->heat_source === 'ac';
     }
 
     /**
@@ -157,6 +207,11 @@ class RoomController extends Controller
             return time() + ($value * 60);
         }
 
-        return $value > (time() + 7210) ? 0 : $value;
+        // Anything else is treated as an already-resolved timestamp. A minute
+        // of slack past the longest duration we offer, so a clock that has
+        // drifted slightly does not silently cancel a boost that just started.
+        $ceiling = time() + (max(self::BOOST_MINUTES) * 60) + 60;
+
+        return $value > $ceiling ? 0 : $value;
     }
 }

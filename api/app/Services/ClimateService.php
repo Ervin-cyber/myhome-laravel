@@ -198,7 +198,7 @@ class ClimateService
         $unitMode = $room->unitMode($mode);
 
         $power = $this->isRoomActive($room, $masterOn)
-            && $this->unitHasWork($room, $unitMode);
+            && $this->unitHasWork($room, $unitMode, $room->is_boosting);
 
         return $room->airConditioners
             ->map(fn (AirConditioner $ac) => $this->unitCommand(
@@ -223,16 +223,26 @@ class ClimateService
      * regulator, so the question here is only whether to hand it the room or
      * not — see IDLE_MARGIN.
      */
-    private function unitHasWork(Room $room, string $unitMode): bool
+    private function unitHasWork(Room $room, string $unitMode, bool $boosting): bool
     {
         // Dry and fan are comfort choices, not calls for heating or cooling.
         if (in_array($unitMode, Room::MODE_OVERRIDES, true)) {
             return true;
         }
 
-        // A room with radiators leaves its unit idle all winter.
+        // A room with radiators leaves its unit idle all winter, boost or not:
+        // boosting such a room is a call for heat, and the boiler answers it.
         if ($unitMode === 'heat' && $room->heat_source !== 'ac') {
             return false;
+        }
+
+        // Somebody has asked for this room, now. The test below is a judgement
+        // about whether the unit is worth running, and a person pressing a
+        // button has already made it — the boiler has always been read this
+        // way, and the same press starting nothing at all on an AC was the
+        // inconsistency rather than the safeguard.
+        if ($boosting) {
+            return true;
         }
 
         // A room that reads its temperature off the unit goes blind the moment
