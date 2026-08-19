@@ -23,6 +23,7 @@ class AirConditioner extends Model
         'xfan',
         'quiet',
         'turbo',
+        'power_save',
         'heating_on',
         'cooling_on',
         'online',
@@ -74,6 +75,7 @@ class AirConditioner extends Model
         'xfan' => 'xfan',
         'quiet' => 'quiet',
         'turbo' => 'turbo',
+        'power_save' => 'power_save',
     ];
 
     /** Values the dashboard may set, mirroring the greeclimate enums. */
@@ -87,6 +89,7 @@ class AirConditioner extends Model
         'xfan' => 'boolean',
         'quiet' => 'boolean',
         'turbo' => 'boolean',
+        'power_save' => 'boolean',
         'heating_on' => 'boolean',
         'cooling_on' => 'boolean',
         'online' => 'boolean',

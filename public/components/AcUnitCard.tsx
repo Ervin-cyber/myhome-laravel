@@ -203,6 +203,21 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                 </div>
             </div>
 
+            <label className="mt-2 flex flex-col gap-1">
+                <span className="text-[10px] uppercase tracking-wide text-gray-500">
+                    Compressor{note('power_save')}
+                </span>
+                <button
+                    onClick={() => onUpdate(ac.id, { power_save: !ac.power_save })}
+                    disabled={isPending || !ac.online}
+                    aria-pressed={ac.power_save}
+                    title="Gree's SE mode. Caps how hard the compressor may work, so it reaches for full output less and overshoots a nearby setpoint less. It cannot go below the unit's own floor."
+                    className={`min-h-[2.75rem] rounded-lg border text-sm transition-all active:scale-95 disabled:opacity-50 ${ac.power_save ? 'border-green-500/50 bg-green-500/20 text-green-300' : 'border-gray-700/60 bg-gray-900/60 text-gray-500'}`}
+                >
+                    {ac.power_save ? 'SE — running gently' : 'SE off — full output'}
+                </button>
+            </label>
+
             {!ac.online && (
                 <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-wider text-gray-500">Offline</p>
             )}

@@ -81,7 +81,7 @@ MODES = {
 # Device properties send_gree_command writes to. Set through apply_setting,
 # which skips anything this greeclimate build does not have.
 DEVICE_SETTINGS = ('mode', 'fan_speed', 'vertical_swing', 'horizontal_swing', 'xfan',
-                   'quiet', 'turbo')
+                   'quiet', 'turbo', 'power_save')
 
 def _by_member(mapping):
     """
@@ -122,6 +122,9 @@ def observed_state(device):
         'xfan': _flag(getattr(device, 'xfan', None)),
         'quiet': _flag(getattr(device, 'quiet', None)),
         'turbo': _flag(getattr(device, 'turbo', None)),
+        # Gree's SE, or economy, mode. The nearest the protocol comes to asking
+        # a compressor to work gently; there is no speed to set directly.
+        'power_save': _flag(getattr(device, 'power_save', None)),
     }
 
 def report_unmapped_settings():
@@ -817,6 +820,7 @@ def desired_state(unit):
         bool(unit.get('xfan')),
         bool(unit.get('quiet')),
         bool(unit.get('turbo')),
+        bool(unit.get('power_save')),
     )
 
 def apply_setting(device, attribute, value):
@@ -851,7 +855,8 @@ async def send_gree_command(ac, desired):
 
             device.power = power_on
             if power_on:
-                _, target_temp, mode, fan_speed, swing_v, swing_h, xfan, quiet, turbo = desired
+                (_, target_temp, mode, fan_speed, swing_v, swing_h,
+                 xfan, quiet, turbo, power_save) = desired
 
                 apply_setting(device, 'mode', MODES.get(mode))
                 device.target_temperature = target_temp
@@ -866,6 +871,7 @@ async def send_gree_command(ac, desired):
                 apply_setting(device, 'fan_speed', FAN_SPEEDS.get(fan_speed))
                 apply_setting(device, 'quiet', quiet)
                 apply_setting(device, 'turbo', turbo)
+                apply_setting(device, 'power_save', power_save)
 
                 apply_setting(device, 'vertical_swing', VERTICAL_SWING.get(swing_v))
                 apply_setting(device, 'horizontal_swing', HORIZONTAL_SWING.get(swing_h))
@@ -1096,6 +1102,7 @@ def disagreements(unit, state):
         ('xfan', bool(unit.get('xfan')), state.get('xfan')),
         ('quiet', bool(unit.get('quiet')), state.get('quiet')),
         ('turbo', bool(unit.get('turbo')), state.get('turbo')),
+        ('power_save', bool(unit.get('power_save')), state.get('power_save')),
         ('swing_v', unit.get('swing_v'), state.get('swing_v')),
         ('swing_h', unit.get('swing_h'), state.get('swing_h')),
     ]

@@ -61,6 +61,7 @@ class LiveReadingCreated implements ShouldBroadcastNow
                 'xfan',
                 'quiet',
                 'turbo',
+                'power_save',
                 'heating_on',
                 'cooling_on',
                 'online',

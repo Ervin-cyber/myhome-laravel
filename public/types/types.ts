@@ -50,7 +50,7 @@ export const SWING_HORIZONTAL: { value: SwingHorizontal; label: string }[] = [
 ];
 
 /** The settings a person chooses, and so the ones that can be seen not to land. */
-export type SettableField = 'fan_speed' | 'swing_vertical' | 'swing_horizontal' | 'xfan' | 'quiet' | 'turbo';
+export type SettableField = 'fan_speed' | 'swing_vertical' | 'swing_horizontal' | 'xfan' | 'quiet' | 'turbo' | 'power_save';
 
 /**
  * What the unit reports about itself, read straight off the hardware.
@@ -69,6 +69,7 @@ export interface ObservedState {
     xfan: boolean | null;
     quiet: boolean | null;
     turbo: boolean | null;
+    power_save: boolean | null;
 }
 
 export interface Room {
@@ -137,6 +138,8 @@ export interface AirConditioner {
     /** Mutually exclusive, and both override fan_speed at the unit. */
     quiet: boolean;
     turbo: boolean;
+    /** Gree's SE mode: caps how hard the compressor may work. Excludes turbo. */
+    power_save: boolean;
     heating_on: boolean;
     cooling_on: boolean;
     online: boolean;

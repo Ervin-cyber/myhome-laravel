@@ -150,7 +150,7 @@ class AirConditionerController extends Controller
     {
         return array_intersect_key($reported, array_flip([
             'power', 'mode', 'target_temp', 'fan_speed',
-            'swing_v', 'swing_h', 'xfan', 'quiet', 'turbo',
+            'swing_v', 'swing_h', 'xfan', 'quiet', 'turbo', 'power_save',
         ]));
     }
 
@@ -226,6 +226,7 @@ class AirConditionerController extends Controller
             'xfan' => 'sometimes|boolean',
             'quiet' => 'sometimes|boolean',
             'turbo' => 'sometimes|boolean',
+            'power_save' => 'sometimes|boolean',
         ]);
 
         $ac->fill($data);
@@ -239,6 +240,14 @@ class AirConditionerController extends Controller
 
         if (! empty($data['turbo'])) {
             $ac->quiet = false;
+            // Turbo asks for everything the unit has and SE forbids exactly
+            // that, so one has to give. Quiet and SE are compatible -- both
+            // want the unit working gently -- and are left alone together.
+            $ac->power_save = false;
+        }
+
+        if (! empty($data['power_save'])) {
+            $ac->turbo = false;
         }
 
         if (! $ac->isDirty()) {
