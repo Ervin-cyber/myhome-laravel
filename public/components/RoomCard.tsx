@@ -1,6 +1,6 @@
 "use client";
 
-import { JSX, useState } from 'react';
+import { JSX, useEffect, useState } from 'react';
 import { AirConditioner, FAN_SPEEDS, Mode, ModeOverride, Room } from '@/types/types';
 import { formatAge, isStale } from '@/lib/utils';
 import AcUnitCard from './AcUnitCard';
@@ -18,7 +18,15 @@ interface Props {
     onRunRoom: (roomId: number, on: boolean) => void;
 }
 
-const BOOSTS = [15, 30, 60];
+/**
+ * A radiator top-up is a quarter of an hour; an air conditioner gets put on for
+ * an evening. Same control, different timescales, because they are used for
+ * different things.
+ */
+const BOOST_MINUTES = [15, 30, 60];
+const TIMER_MINUTES = [30, 60, 120];
+
+const durationLabel = (mins: number) => (mins < 60 ? `${mins} min` : `${mins / 60} h`);
 
 const MODE_CHOICES: { value: ModeOverride; label: string; hint: string }[] = [
     { value: null, label: 'Auto', hint: 'Follow the house' },
@@ -123,6 +131,33 @@ export default function RoomCard({
     // What the buttons below ask for, so the unit's own answer can be compared
     // against it. Only running units are asked: a Gree that is off still
     // reports the mode it was last left in, which is not a disagreement.
+    // The clock lives in state rather than being read while rendering. It is
+    // not a function of the props, so reading it in the body gives a number
+    // that moves whenever React happens to re-render and at no other time.
+    const [now, setNow] = useState(0);
+
+    useEffect(() => {
+        if (!room.is_boosting) return;
+
+        const tick = () => setNow(Date.now());
+
+        // Deferred by a turn rather than called here, so the first reading is
+        // a callback like every later one instead of a write during the effect.
+        const initial = setTimeout(tick, 0);
+        const timer = setInterval(tick, 30000);
+
+        return () => {
+            clearTimeout(initial);
+            clearInterval(timer);
+        };
+    }, [room.is_boosting]);
+
+    // Half a minute of lag on a figure quoted in whole minutes, and it never
+    // reads zero: a boost with seconds left is still a boost.
+    const boostMinutesLeft = room.is_boosting && now
+        ? Math.max(1, Math.ceil((room.hvac_until * 1000 - now) / 60000))
+        : null;
+
     const askedMode = room.mode_override ?? (houseMode === 'heating' ? 'heat' : 'cool');
     const actualMode = units
         .filter((ac) => ac.observed_power && ac.observed_state?.mode)
@@ -283,7 +318,14 @@ export default function RoomCard({
             )}
 
             <div className="mt-4">
-                <span className="text-[10px] uppercase tracking-wide text-gray-500">Boost</span>
+                {/* The same control, named for what it will actually do. A
+                    radiator top-up leaves the room under its thermostat; a
+                    split is put on for a while and then wanted off, and one
+                    word for both is what made a 15 minute boost run all
+                    evening. */}
+                <span className="text-[10px] uppercase tracking-wide text-gray-500">
+                    {unitsUsable ? 'Run for' : 'Boost'}
+                </span>
                 <div className="mt-1.5 grid grid-cols-3 gap-2">
                     {room.is_boosting ? (
                         <button
@@ -291,17 +333,20 @@ export default function RoomCard({
                             disabled={isPending}
                             className="col-span-3 min-h-[2.75rem] rounded-xl bg-red-500/20 text-sm font-medium text-red-400 transition-all active:scale-95 hover:bg-red-500/30 disabled:opacity-50"
                         >
-                            Cancel boost
+                            {unitsUsable ? 'Stop now' : 'Cancel boost'}
+                            {boostMinutesLeft !== null && (
+                                <span className="ml-1 font-normal opacity-70">· {boostMinutesLeft} min left</span>
+                            )}
                         </button>
                     ) : (
-                        BOOSTS.map((mins) => (
+                        (unitsUsable ? TIMER_MINUTES : BOOST_MINUTES).map((mins) => (
                             <button
                                 key={mins}
                                 onClick={() => onUpdateRoom(room.id, { hvac_until: mins })}
                                 disabled={isPending}
                                 className="min-h-[2.75rem] rounded-xl border border-purple-500/40 bg-purple-500/15 text-sm font-medium text-purple-300 transition-all active:scale-95 hover:bg-purple-500/25 disabled:opacity-50"
                             >
-                                {mins} min
+                                {durationLabel(mins)}
                             </button>
                         ))
                     )}
