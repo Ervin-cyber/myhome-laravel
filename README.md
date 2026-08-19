@@ -118,6 +118,32 @@ since the plug was added; or the plug holding credentials propagated by TP-Link
 Simple Setup from another device on the network. The last needs a factory reset
 with other TP-Link devices powered off.
 
+## 🌡️ Who regulates the room
+
+By default the API cuts a unit's power once its room is more than 2°C past its
+setpoint — there is nothing left for the unit to do at that point, and a
+compressor idling against a satisfied room is waste.
+
+That judgement depends on the room's sensor being a fair witness. Where one sits
+in the unit's own airflow it reads the discharge rather than the room, and cuts
+the unit on a temperature nobody is feeling. Set the margin in `api/.env`:
+
+```
+CLIMATE_IDLE_MARGIN=off      # never cut on temperature
+CLIMATE_IDLE_MARGIN=3        # more slack before cutting
+```
+
+With it off, a unit keeps power for as long as its room is on and its own
+inverter does the regulating from the setpoint and mode we hand it. That is a
+legitimate way to run the system rather than a degraded one: the inverter is
+better at holding a room than we are from outside, and it cannot be fooled by
+its own discharge air.
+
+Rooms reading their temperature from the unit are exempt either way — they go
+blind the moment it stops, so nothing would ever ask it to start again.
+
+Run `php artisan config:clear` after changing it.
+
 ## 🚀 Technical Architecture
 
 This project is built on a high-performance, containerized, and decoupled architecture.
