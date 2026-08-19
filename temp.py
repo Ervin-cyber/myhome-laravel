@@ -175,10 +175,31 @@ ac_loop_thread = None
 plug_loop = None
 plug_loop_thread = None
 
-# Last state pushed to each unit, keyed by MAC: (desired, sent_at, asked_at).
-# asked_at is the dashboard's commanded_at as it stood when we spoke, and it is
-# what decides whether we speak again -- see needs_command.
-last_sent_ac_state = {}
+# What the last control document asked of each unit: (desired, asked_at).
+#
+# The last *document*, not the last thing we sent. Seeded from the first
+# document after start-up without sending anything: nobody has asked us for
+# anything yet, and a unit somebody started themselves must not be switched off
+# merely because this process has no memory of it.
+last_document_state = {}
+
+# When we last actually spoke to each unit, keyed by MAC. Kept apart from the
+# above because they answer different questions -- one decides whether to speak,
+# the other how long to wait before believing the unit over the document.
+last_command_at = {}
+
+# Nothing has been commanded at start-up, so this stands in as "how long since
+# we last spoke" for a unit we have never spoken to.
+PROCESS_STARTED_AT = time.time()
+
+# What each unit last said about its own power, keyed by MAC.
+#
+# Used only to hold our tongue: it can stop a command and can never cause one,
+# so it cannot bring back the behaviour where a reading became an instruction.
+# Without it, following somebody's own switch-on turns the document's power
+# around, which reads as the room changing its mind and earns the unit a
+# command telling it to do what it is visibly already doing.
+last_observed_power = {}
 
 # How often the units are read, so the dashboard knows what they are doing even
 # with nobody watching. Reading only: nothing is commanded on a timer, because a
@@ -856,7 +877,7 @@ async def send_gree_command(ac, desired):
             await asyncio.wait_for(device.push_state_update(), timeout=5.0)
             print(f"[{ip}] Gree command SUCCESSFUL: {desired}")
 
-            last_sent_ac_state[mac] = (desired, time.time(), ac.get('commanded_at'))
+            last_command_at[mac] = time.time()
 
             observed = None
             if device.current_temperature is not None:
@@ -881,7 +902,7 @@ async def send_gree_command(ac, desired):
              # in part, which makes the last observation a description of a unit
              # that no longer exists.
              GREE_DEVICES.pop(mac, None)
-             last_sent_ac_state.pop(mac, None)
+             last_command_at.pop(mac, None)
 
              send_ntfy_alert(f"Gree command error ({ip}): {err_msg}", "warning", key=f"ac_cmd_{ip}")
              return None
@@ -906,21 +927,33 @@ def needs_command(unit, desired):
     mac = unit.get('mac')
     asked_at = unit.get('commanded_at')
 
-    previous = last_sent_ac_state.get(mac)
+    previous = last_document_state.get(mac)
 
+    # First document since start-up. It describes what the house wants, not
+    # anything anybody has just asked for, so acting on it would switch units
+    # according to a memory we do not have. Recorded as the baseline and
+    # nothing more -- this is the line that switched off an air conditioner
+    # somebody had started in the Gree app fifteen seconds earlier.
     if previous is None:
-        return True
+        return False
 
-    prev_desired, _, prev_asked_at = previous
+    prev_desired, prev_asked_at = previous
 
-    # The dashboard asked for something since we last spoke.
+    # The dashboard asked for something since the last document.
     if asked_at != prev_asked_at:
         return True
 
-    # Nobody asked, but the room wants this unit on when it is off, or off when
-    # it is on. That is the loop's decision rather than a setting, and the only
-    # thing left that may still start a conversation.
-    return bool(prev_desired[0]) != bool(desired[0])
+    # Nobody asked, but the room's mind changed about whether this unit runs.
+    # That is the loop's decision rather than a setting, and the only thing
+    # left that may still start a conversation.
+    if bool(prev_desired[0]) == bool(desired[0]):
+        return False
+
+    # Unless the unit is already doing it, which is the case whenever the room
+    # changed its mind *because* we adopted what somebody did at the handset.
+    observed = last_observed_power.get(mac)
+
+    return observed is None or observed != bool(desired[0])
 
 def apply_units(units):
     """
@@ -939,8 +972,15 @@ def apply_units(units):
                 continue
 
             desired = desired_state(unit)
+            speak = needs_command(unit, desired)
 
-            if not needs_command(unit, desired):
+            # Recorded whether or not we act on it, so the next document is
+            # compared against what the house last wanted rather than against
+            # the last thing that happened to be sent. A command that fails is
+            # not retried -- see the dashboard, which says so.
+            last_document_state[mac] = (desired, unit.get('commanded_at'))
+
+            if not speak:
                 continue
 
             result = await send_gree_command(unit, desired)
@@ -1078,32 +1118,30 @@ def manual_power_change(unit, state):
     """
     Whether a person switched this unit themselves — handset, or the Gree app.
 
-    Only ever says yes on strong evidence: we must have a record of what we
-    last sent, it must have had time to land, and the unit must nonetheless be
-    doing the opposite. Without that record a human is indistinguishable from a
-    command still in flight, and guessing would hand the house to a dropped
-    packet.
+    Measured against what the document wants, not against what we last sent.
+    Those were the same thing while every difference produced a command; they
+    are not now, and after a restart there is no send history at all -- which
+    is exactly when somebody's own switching most needs recognising rather
+    than being taken for a unit we forgot about.
+
+    Waits out MANUAL_SETTLE_SECONDS since we last spoke to this unit, so a
+    command still travelling is never read as a person, and start-up counts as
+    having spoken so that the first readings are not acted on either.
 
     Returns True or False for what the person chose, or None for "no evidence",
     which is not the same as False and must not be reported as one.
     """
     mac = unit.get('mac')
-    previous = last_sent_ac_state.get(mac)
+    ours = bool(unit.get('power'))
 
-    if previous is None:
-        pending_manual.pop(mac, None)
-        return None
-
-    sent, sent_at, _ = previous
-
-    if time.time() - sent_at < MANUAL_SETTLE_SECONDS:
+    if time.time() - last_command_at.get(mac, PROCESS_STARTED_AT) < MANUAL_SETTLE_SECONDS:
         pending_manual.pop(mac, None)
         return None
 
     theirs = state.get('power')
 
-    if theirs is None or bool(sent[0]) == bool(theirs):
-        # Agrees with us, so whatever we were waiting to confirm is moot.
+    if theirs is None or ours == bool(theirs):
+        # Agrees with the document, so whatever we were waiting on is moot.
         pending_manual.pop(mac, None)
         return None
 
@@ -1113,7 +1151,7 @@ def manual_power_change(unit, state):
     # unit switched, so the answer stays put; a bad packet does not.
     if pending_manual.get(mac) != theirs:
         pending_manual[mac] = theirs
-        print(f"[{unit.get('ip')}] reads power={theirs} against our {bool(sent[0])}; "
+        print(f"[{unit.get('ip')}] reads power={theirs} against the document's {ours}; "
               f"waiting for a second read before following it.")
         return None
 
@@ -1172,6 +1210,8 @@ def poll_unit_state():
                     'reported_temp': temperature,
                     'reported_state': state,
                 }
+
+                last_observed_power[unit['mac']] = bool(state.get('power'))
 
                 manual = manual_power_change(unit, state)
 
@@ -1254,6 +1294,8 @@ def observe_units(units):
                     'reported_temp': temperature,
                     'reported_state': state,
                 }
+
+                last_observed_power[unit['mac']] = bool(state.get('power'))
 
                 manual = manual_power_change(unit, state)
 
