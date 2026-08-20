@@ -28,6 +28,8 @@ export default function Dashboard(): JSX.Element {
         updateAcState,
         updateRoomState,
         runRoom,
+        idle,
+        resume,
     } = useThermostat();
 
     const { heating, cooling, mode, enabled, lastUpdated, airConditioners, rooms, smartPlugs } = data;
@@ -63,7 +65,22 @@ export default function Dashboard(): JSX.Element {
                         </div>
                         <div className="min-w-0 flex-1">
                             <h1 className="truncate text-xl font-bold text-white md:text-2xl">Home Climate</h1>
-                            <p className="text-sm text-gray-400">Updated {formatAge(lastUpdated.toISOString())}</p>
+                            <p className="text-sm text-gray-400">
+                            Updated {formatAge(lastUpdated.toISOString())}
+                            {/* A line, not a curtain. The one place this page is
+                                read from is across the room, and hiding it to
+                                save polling nobody asked for would cost more
+                                than the polling does. Any touch resumes it;
+                                this is just what to press if you would rather. */}
+                            {idle && (
+                                <button
+                                    onClick={resume}
+                                    className="ml-2 rounded-full bg-gray-700/60 px-2 py-0.5 text-xs text-gray-300 transition-colors hover:bg-gray-600/60"
+                                >
+                                    Live updates paused · resume
+                                </button>
+                            )}
+                        </p>
                         </div>
                         <button
                             onClick={() => signOut()}

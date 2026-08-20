@@ -38,6 +38,7 @@ class AirConditioner extends Model
         'rejected_settings',
         'manual_power',
         'manual_since',
+        'hold_reason',
     ];
 
     /**
@@ -49,6 +50,16 @@ class AirConditioner extends Model
      * hardware rather than intent.
      */
     public const OBSERVED_FRESH_SECONDS = 180;
+
+    /**
+     * How long a unit stays off once it has stopped, in seconds.
+     *
+     * A compressor restarted straight after stopping is asked to start against
+     * head pressure that has not equalised, which wears it out early. The guard
+     * belongs to the unit rather than to whatever is deciding, which is why it
+     * lives here -- ClimateService reads it from this constant.
+     */
+    public const MIN_OFF_SECONDS = 180;
 
     /**
      * How long a command has to land before we believe the unit over ourselves.
@@ -106,7 +117,7 @@ class AirConditioner extends Model
         'manual_since' => 'datetime',
     ];
 
-    protected $appends = ['calibrated_temp', 'observed_power', 'following_remote', 'awaiting', 'rejected'];
+    protected $appends = ['calibrated_temp', 'observed_power', 'following_remote', 'awaiting', 'rejected', 'cooling_down_for'];
 
     public function room(): BelongsTo
     {
@@ -205,6 +216,25 @@ class AirConditioner extends Model
             (array) ($this->rejected_settings ?? []),
             fn ($field) => array_key_exists($field, self::ADOPTED)
         ));
+    }
+
+    /**
+     * Seconds until this unit may start again, or null when nothing is holding
+     * it.
+     *
+     * The compressor guard is invisible from outside: power is simply forced
+     * off, so the room reads as idle and its switch appears to do nothing. It
+     * cost two debugging sessions before anything said so out loud.
+     */
+    public function getCoolingDownForAttribute(): ?int
+    {
+        if ($this->power_on || $this->power_changed_at === null) {
+            return null;
+        }
+
+        $remaining = self::MIN_OFF_SECONDS - $this->power_changed_at->diffInSeconds(now());
+
+        return $remaining > 0 ? (int) ceil($remaining) : null;
     }
 
     /**

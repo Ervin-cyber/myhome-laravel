@@ -52,7 +52,7 @@ class ClimateService
      * A compressor that is restarted immediately after stopping will fail
      * early, so a unit stays off for at least this long once switched off.
      */
-    public const AC_MIN_OFF_SECONDS = 180;
+    public const AC_MIN_OFF_SECONDS = AirConditioner::MIN_OFF_SECONDS;
 
     /** How long the Pi may keep acting on a document before failing safe. */
     public const CONTROL_TTL_SECONDS = 300;
@@ -212,9 +212,8 @@ class ClimateService
     private function commandsForRoom(Room $room, string $mode, bool $masterOn): array
     {
         $unitMode = $room->unitMode($mode);
-
-        $power = $this->isRoomActive($room, $masterOn)
-            && $this->unitHasWork($room, $unitMode, $room->is_boosting);
+        $active = $this->isRoomActive($room, $masterOn);
+        $hasWork = $this->unitHasWork($room, $unitMode, $room->is_boosting);
 
         return $room->airConditioners
             ->map(fn (AirConditioner $ac) => $this->unitCommand(
@@ -224,12 +223,56 @@ class ClimateService
                 // minute later is not a control loop, it is an argument. Held
                 // until somebody uses the app, which is the same gesture as
                 // asking for automatic control back.
-                power: $ac->manual_power ?? ($ac->enabled && $power),
+                power: $ac->manual_power ?? ($ac->enabled && $active && $hasWork),
                 mode: $unitMode,
                 // The room owns the setpoint; every unit in it shares one target.
                 target: (float) $room->target_temp,
+                hold: $this->holdReason($room, $ac, $unitMode, $masterOn, $active, $hasWork),
             ))
             ->all();
+    }
+
+    /**
+     * Why this unit is not running, in one word the dashboard can render.
+     *
+     * Written where the decision is made rather than inferred by the dashboard
+     * from the values it happens to see. Inferring it would be a second copy of
+     * these rules, free to drift from this one and to be confidently wrong.
+     *
+     * Ordered by which reason actually decides. A parked unit in a room that is
+     * also off is parked -- that is the one to fix first, and naming the other
+     * would send somebody to the wrong switch.
+     */
+    private function holdReason(
+        Room $room,
+        AirConditioner $ac,
+        string $unitMode,
+        bool $masterOn,
+        bool $active,
+        bool $hasWork,
+    ): ?string {
+        if ($ac->manual_power !== null) {
+            return $ac->manual_power ? null : 'remote';
+        }
+
+        if (! $ac->enabled) {
+            return 'parked';
+        }
+
+        if (! $active) {
+            return $masterOn ? 'room_off' : 'house_off';
+        }
+
+        if (! $hasWork) {
+            return $unitMode === 'heat' && $room->heat_source !== 'ac'
+                ? 'radiators'
+                : 'at_temperature';
+        }
+
+        // Everything the loop wants is satisfied, so the only thing left that
+        // can hold it is the compressor guard -- which unitCommand applies, and
+        // which reports itself from there.
+        return null;
     }
 
     /**
@@ -302,7 +345,7 @@ class ClimateService
     /**
      * @return array<string, mixed>
      */
-    private function unitCommand(AirConditioner $ac, bool $power, string $mode, float $target): array
+    private function unitCommand(AirConditioner $ac, bool $power, string $mode, float $target, ?string $hold = null): array
     {
         // Fan mode never starts the compressor, so it is not held back by it.
         // Nor is a unit somebody has just switched on themselves: the guard
@@ -310,9 +353,13 @@ class ClimateService
         // person standing in front of it with a remote.
         if ($power && $mode !== 'fan' && ! $ac->following_remote && $this->isCoolingDown($ac)) {
             $power = false;
+            $hold = 'cooling_down';
         }
 
-        $this->persistUnitState($ac, $power, $mode, $target);
+        // Only while it is actually off. A running unit has nothing being held
+        // back, and leaving a stale reason on it would have the card explaining
+        // an absence that is not there.
+        $this->persistUnitState($ac, $power, $mode, $target, $power ? null : $hold);
 
         return [
             'mac' => $ac->mac,
@@ -361,8 +408,10 @@ class ClimateService
         return $ac->power_changed_at->diffInSeconds(now()) < self::AC_MIN_OFF_SECONDS;
     }
 
-    private function persistUnitState(AirConditioner $ac, bool $power, string $mode, float $target): void
+    private function persistUnitState(AirConditioner $ac, bool $power, string $mode, float $target, ?string $hold = null): void
     {
+        $ac->hold_reason = $hold;
+
         $wasOn = (bool) $ac->power_on;
 
         // Dry runs the compressor too, so it counts as cooling for the

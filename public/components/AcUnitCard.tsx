@@ -1,7 +1,7 @@
 "use client";
 
 import { JSX } from 'react';
-import { AirConditioner, FAN_SPEEDS, FanSpeed, SettableField, SWING_HORIZONTAL, SWING_VERTICAL, SwingHorizontal, SwingVertical } from '@/types/types';
+import { AirConditioner, FAN_SPEEDS, FanSpeed, HOLD_LABELS, SettableField, SWING_HORIZONTAL, SWING_VERTICAL, SwingHorizontal, SwingVertical } from '@/types/types';
 import { formatAge, isStale } from '@/lib/utils';
 import ACUnitIcon from './ACUnitIcon';
 
@@ -41,6 +41,14 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
         ? ac.manual_power
             ? { label: 'Running', tone: 'bg-blue-500/20 text-blue-300' }
             : { label: 'Off', tone: 'bg-gray-700/50 text-gray-400' }
+        // Ahead of "Idle", which is the same fact with the reason removed.
+        : ac.hold_reason && ac.hold_reason !== 'room_off' && ac.hold_reason !== 'house_off'
+        ? {
+            label: ac.cooling_down_for
+                ? `${HOLD_LABELS[ac.hold_reason]} · ${Math.max(1, Math.ceil(ac.cooling_down_for / 60))} min`
+                : HOLD_LABELS[ac.hold_reason],
+            tone: 'bg-amber-500/20 text-amber-300',
+        }
         : drifted
             ? { label: ac.observed_power ? 'On at the unit' : 'Off at the unit', tone: 'bg-amber-500/20 text-amber-300' }
             : running

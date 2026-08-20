@@ -67,6 +67,11 @@ return [
     |
     */
 
+    'plug_macs' => array_values(array_filter(array_map(
+        fn ($mac) => strtolower(preg_replace('/[^0-9a-fA-F]/', '', trim($mac))),
+        explode(',', (string) env('CLIMATE_PLUG_MACS', ''))
+    ))),
+
     /*
     |--------------------------------------------------------------------------
     | How far past its setpoint a room goes before its unit is cut
@@ -94,9 +99,28 @@ return [
         ? null
         : (float) (env('CLIMATE_IDLE_MARGIN') ?: 2.0),
 
-    'plug_macs' => array_values(array_filter(array_map(
-        fn ($mac) => strtolower(preg_replace('/[^0-9a-fA-F]/', '', trim($mac))),
-        explode(',', (string) env('CLIMATE_PLUG_MACS', ''))
-    ))),
+    /*
+    |--------------------------------------------------------------------------
+    | How long the dashboard waits before it stops asking for live data
+    |--------------------------------------------------------------------------
+    |
+    | In minutes. A page nobody has touched for this long stops re-arming the
+    | live window, and the Pi stops polling the units until somebody comes back.
+    |
+    | Served to the browser rather than compiled into it. A NEXT_PUBLIC_ variable
+    | would be baked in at build time, so changing this number would mean
+    | rebuilding and pushing the frontend image; here it is `config:clear`.
+    |
+    |     CLIMATE_DASHBOARD_IDLE_MINUTES=5
+    |     CLIMATE_DASHBOARD_IDLE_MINUTES=off   # a wall display; never pause
+    |
+    | Nothing pauses while a command is still awaiting confirmation, a
+    | compressor is counting down, or a boost is running out, whatever this says.
+    |
+    */
+
+    'dashboard_idle_minutes' => in_array(strtolower((string) env('CLIMATE_DASHBOARD_IDLE_MINUTES', '')), ['off', 'never', 'false'], true)
+        ? null
+        : max(1, (int) (env('CLIMATE_DASHBOARD_IDLE_MINUTES') ?: 3)),
 
 ];

@@ -55,6 +55,9 @@ class LiveReadingCreated implements ShouldBroadcastNow
                 'enabled',
                 'mode',
                 'power_on',
+                // Without this the cooling-down accessor reads null off an
+                // unloaded column and the guard goes back to being invisible.
+                'power_changed_at',
                 'fan_speed',
                 'swing_vertical',
                 'swing_horizontal',
@@ -76,6 +79,7 @@ class LiveReadingCreated implements ShouldBroadcastNow
                 'rejected_settings',
                 'manual_power',
                 'manual_since',
+                'hold_reason',
             ]),
         ];
     }

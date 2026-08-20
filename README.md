@@ -144,6 +144,23 @@ blind the moment it stops, so nothing would ever ask it to start again.
 
 Run `php artisan config:clear` after changing it.
 
+## 💤 Pausing a dashboard nobody is watching
+
+A tab left visible and unattended keeps asking the Pi to poll the units every
+fifteen seconds, which competes with the commands that matter. After three
+minutes without a touch the page stops asking, the live window lapses, and the
+Pi goes quiet; any interaction resumes it and a line in the header says so.
+
+```
+CLIMATE_DASHBOARD_IDLE_MINUTES=5
+CLIMATE_DASHBOARD_IDLE_MINUTES=off   # a wall display; never pause
+```
+
+Served to the browser rather than compiled into it, so this is a
+`config:clear` rather than a frontend rebuild. Nothing pauses while a command
+is awaiting confirmation, a compressor is counting down or a boost is running
+out — those are exactly when somebody is watching without touching anything.
+
 ## 🚀 Technical Architecture
 
 This project is built on a high-performance, containerized, and decoupled architecture.
