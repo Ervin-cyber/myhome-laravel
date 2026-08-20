@@ -49,6 +49,43 @@ export const SWING_HORIZONTAL: { value: SwingHorizontal; label: string }[] = [
     { value: 'fixed_right', label: 'Right' },
 ];
 
+/**
+ * Why the control loop is holding a unit off, in its own words.
+ *
+ * Written by the API where the decision is made. The dashboard renders it and
+ * never re-derives it: working out the reason here would be a second copy of
+ * the rules, free to drift from the one that actually decides.
+ */
+export type HoldReason =
+    | 'cooling_down'
+    | 'at_temperature'
+    | 'room_off'
+    | 'house_off'
+    | 'parked'
+    | 'remote'
+    | 'radiators';
+
+export const HOLD_LABELS: Record<HoldReason, string> = {
+    cooling_down: 'Compressor protection',
+    at_temperature: 'Room at temperature',
+    room_off: 'Room off',
+    house_off: 'House off',
+    parked: 'Unit parked',
+    remote: 'Off at the remote',
+    radiators: 'Radiators heat this room',
+};
+
+/** The longer form, for the one place there is room to explain properly. */
+export const HOLD_EXPLANATIONS: Record<HoldReason, string> = {
+    cooling_down: 'Waiting before restarting — a compressor started straight after stopping wears out early.',
+    at_temperature: 'The room is already past its target, so there is nothing for the unit to do.',
+    room_off: 'This room is switched off. Its own power button starts it.',
+    house_off: 'The house is switched off. The switch in the header starts it.',
+    parked: 'This unit is set aside and will not run. Running the room brings it back.',
+    remote: 'Somebody switched this unit off at the handset, and the app is leaving it alone.',
+    radiators: 'This room is heated by radiators, so its unit stays idle in winter.',
+};
+
 /** The settings a person chooses, and so the ones that can be seen not to land. */
 export type SettableField = 'fan_speed' | 'swing_vertical' | 'swing_horizontal' | 'xfan' | 'quiet' | 'turbo' | 'power_save';
 
@@ -121,6 +158,10 @@ export interface AirConditioner {
     observed_at: string | null;
     /** True while a command may still be travelling to the unit. */
     awaiting: boolean;
+    /** Why the loop is holding this unit off, or null when nothing is. */
+    hold_reason: HoldReason | null;
+    /** Seconds until the compressor guard releases, or null when it is not holding. */
+    cooling_down_for: number | null;
     /** Settings whose last command the unit did not take. Nothing retries them. */
     rejected: SettableField[];
     /**

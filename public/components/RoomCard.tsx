@@ -1,7 +1,7 @@
 "use client";
 
 import { JSX, useEffect, useState } from 'react';
-import { AirConditioner, FAN_SPEEDS, Mode, ModeOverride, Room } from '@/types/types';
+import { AirConditioner, FAN_SPEEDS, HOLD_EXPLANATIONS, HOLD_LABELS, HoldReason, Mode, ModeOverride, Room } from '@/types/types';
 import { formatAge, isStale } from '@/lib/utils';
 import AcUnitCard from './AcUnitCard';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
@@ -82,12 +82,17 @@ function summariseUnits(units: AirConditioner[]): { title: string; detail: strin
  * is running, and the card should read the same as if the app had started it --
  * how it came to be running is a footnote, not the headline.
  */
-function statusOf(room: Room, active: boolean): { label: string; tone: string } {
+function statusOf(room: Room, active: boolean, held: HoldReason | null): { label: string; tone: string } {
     if (!active) return { label: 'Off', tone: 'bg-gray-700/50 text-gray-400' };
     if (room.mode_override === 'fan') return { label: 'Fan', tone: 'bg-teal-500/20 text-teal-300' };
     if (room.mode_override === 'dry') return { label: 'Drying', tone: 'bg-cyan-500/20 text-cyan-300' };
     if (room.heating_on) return { label: 'Heating', tone: 'bg-orange-500/20 text-orange-300' };
     if (room.cooling_on) return { label: 'Cooling', tone: 'bg-blue-500/20 text-blue-300' };
+
+    // "Standby" was true and said nothing. A room switched on and not cooling
+    // always has a reason, the loop always knows it, and twice now not saying
+    // it has cost an evening working out whether the app was broken.
+    if (held) return { label: HOLD_LABELS[held], tone: 'bg-amber-500/20 text-amber-300' };
 
     return { label: 'Standby', tone: 'bg-green-500/20 text-green-400' };
 }
@@ -119,7 +124,13 @@ export default function RoomCard({
         ? byRemote.some((ac) => ac.manual_power)
         : active || byRemote.some((ac) => ac.manual_power);
 
-    const status = statusOf(room, effectivelyActive);
+    // Taken from the unit rather than worked out here. The loop decides, and a
+    // second implementation of its rules living in the dashboard would be free
+    // to drift from it and to be confidently wrong.
+    const held = units.find((ac) => ac.hold_reason)?.hold_reason ?? null;
+    const releasesIn = units.find((ac) => ac.cooling_down_for)?.cooling_down_for ?? null;
+
+    const status = statusOf(room, effectivelyActive, held);
     const summary = summariseUnits(units);
     const stale = isStale(room.current_temp_at);
 
@@ -209,7 +220,19 @@ export default function RoomCard({
 
                     {/* A footnote, not the headline. The state above says what
                         the room is doing; this only says who asked for it. */}
-                    {byRemote.length > 0 && (
+                    {/* The reason, in full, where there is room for it. The badge above
+                has space for three words; this is where somebody who wants to
+                know what to press about it can find out. */}
+            {held && held !== 'room_off' && (
+                <p className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    {HOLD_EXPLANATIONS[held]}
+                    {releasesIn !== null && (
+                        <span className="font-medium"> Ready in {Math.max(1, Math.ceil(releasesIn / 60))} min.</span>
+                    )}
+                </p>
+            )}
+
+            {byRemote.length > 0 && (
                         <span className="ml-1.5 inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-xs font-medium text-violet-300">
                             by remote
                         </span>
@@ -279,6 +302,18 @@ export default function RoomCard({
                     </button>
                 </div>
             </div>
+
+            {/* The reason, in full, where there is room for it. The badge above
+                has space for three words; this is where somebody who wants to
+                know what to press about it can find out. */}
+            {held && held !== 'room_off' && (
+                <p className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    {HOLD_EXPLANATIONS[held]}
+                    {releasesIn !== null && (
+                        <span className="font-medium"> Ready in {Math.max(1, Math.ceil(releasesIn / 60))} min.</span>
+                    )}
+                </p>
+            )}
 
             {byRemote.length > 0 && (
                 <p className="mt-3 rounded-xl border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-xs text-violet-200">
