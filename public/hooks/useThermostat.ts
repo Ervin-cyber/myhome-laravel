@@ -19,6 +19,26 @@ const writeKey = (target: WriteTarget, id: number) => `${target}:${id}`;
  */
 const LIVE_REARM_MS = 4 * 60 * 1000;
 
+/**
+ * How long without a touch before the page stops asking for live data.
+ *
+ * A backgrounded tab already costs nothing -- both timers check
+ * visibilityState. What this covers is a tab left *visible* and unattended: a
+ * laptop open on the counter, a wall display. That kept re-arming the live
+ * window forever, and the real cost of that is not here but on the Pi, which
+ * polls both units every fifteen seconds for as long as the window stands and
+ * holds gree_lock while it does.
+ *
+ * Three minutes rather than one. The window exists so you can *watch* -- change
+ * a setpoint and wait to see the unit take it -- and that is a minute or more
+ * of staring with no input at all. Pausing then would hide the answer somebody
+ * was waiting for.
+ */
+const IDLE_AFTER_MS = 3 * 60 * 1000;
+
+/** What counts as touching the page. Cheap events, all passive. */
+const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'] as const;
+
 export function useThermostat() {
     const { showNotification } = useNotification();
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -45,6 +65,21 @@ export function useThermostat() {
     // Per-entity, so adjusting one card does not freeze the controls of the others.
     const [pendingAcIds, setPendingAcIds] = useState<number[]>([]);
     const [pendingRoomIds, setPendingRoomIds] = useState<number[]>([]);
+
+    // Live polling stops when nobody has touched the page for a while. Refs
+    // rather than state for the ones the interval reads: it is created once and
+    // would otherwise close over whatever the values were at that moment.
+    const [idle, setIdle] = useState(false);
+    const idleRef = useRef(false);
+    const lastTouchRef = useRef(Date.now());
+    const pendingRef = useRef(false);
+
+    // Whether anything is still resolving, kept where the interval can read it.
+    // A command waiting to be confirmed, a compressor counting down, a boost
+    // running out: all of them mean somebody may be watching without touching.
+    pendingRef.current =
+        data.rooms.some((room) => room.is_boosting)
+        || data.airConditioners.some((ac) => ac.awaiting || ac.cooling_down_for !== null);
 
     const processUpdate = useCallback((tempData: TemperatureResponse, stateData: SystemStateResponse) => {
         setData(prev => ({
@@ -146,19 +181,49 @@ export function useThermostat() {
         // on this cadence and they are not broadcast -- the Pi writes them and
         // says nothing, because waking every listener for a temperature nobody
         // is looking at is the cost this window exists to avoid.
+        const wake = () => {
+            lastTouchRef.current = Date.now();
+
+            if (idleRef.current) {
+                idleRef.current = false;
+                setIdle(false);
+                refreshData();
+                requestLiveData();
+            }
+        };
+
+        ACTIVITY_EVENTS.forEach((event) =>
+            window.addEventListener(event, wake, { passive: true }));
+
         const pollInterval = setInterval(() => {
             // A background tab is nobody watching. The Pi keeps reading the
             // units on its own account either way, so nothing is missed by not
             // asking -- whatever it found is waiting when the tab comes back.
             if (document.visibilityState !== 'visible') return;
 
+            // Nothing is ever paused while something is still resolving. A
+            // command waiting to be confirmed, a compressor counting down, a
+            // boost running out -- those are the moments somebody is most
+            // likely watching without touching anything.
+            const untouched = Date.now() - lastTouchRef.current > IDLE_AFTER_MS;
+
+            if (untouched && !pendingRef.current) {
+                if (!idleRef.current) {
+                    idleRef.current = true;
+                    setIdle(true);
+                }
+
+                return;
+            }
+
             refreshData();
         }, 15000);
 
-        // Only while the tab is actually in front: a dashboard left open on a
-        // background tab is nobody watching.
+        // Only while the tab is in front and somebody is actually there. The
+        // window lapses on its own once we stop re-arming it, and the Pi goes
+        // quiet with it.
         const liveInterval = setInterval(() => {
-            if (document.visibilityState === 'visible') requestLiveData();
+            if (document.visibilityState === 'visible' && !idleRef.current) requestLiveData();
         }, LIVE_REARM_MS);
 
         const echo = createEcho();
@@ -187,6 +252,7 @@ export function useThermostat() {
         const timers = timersRef.current;
 
         return () => {
+            ACTIVITY_EVENTS.forEach((event) => window.removeEventListener(event, wake));
             clearInterval(pollInterval);
             clearInterval(liveInterval);
             if (echo) echo.leave('live-updates');
@@ -388,6 +454,14 @@ export function useThermostat() {
         refreshData,
         changeMode,
         togglePower,
+        idle,
+        resume: () => {
+            idleRef.current = false;
+            lastTouchRef.current = Date.now();
+            setIdle(false);
+            refreshData();
+            requestLiveData();
+        },
         updateAcState,
         updateRoomState,
         runRoom
