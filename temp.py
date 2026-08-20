@@ -234,6 +234,16 @@ pending_manual = {}
 # units these are polled even with nobody watching, because consumption is the
 # only signal that says whether a command actually reached the hardware.
 PLUG_DEVICES = {}
+
+# Every plug we have successfully bound to since start-up.
+#
+# A plug that stops answering is removed from PLUG_DEVICES but stays here, and
+# the difference between the two is what says "go and look again". Without it,
+# rediscovery could only be triggered by having no plugs at all -- so one plug
+# dropping off while another kept working left the first one gone until the
+# service was restarted, which on a metering plug meant a day of no readings
+# and nothing in the log after the first failure.
+known_plug_macs = set()
 PLUG_POLL_INTERVAL = 120
 last_plug_poll_at = 0
 
@@ -586,6 +596,7 @@ async def init_plugs():
             continue
 
         discovered[mac] = device
+        known_plug_macs.add(mac)
 
     PLUG_DEVICES = discovered
     print(f"Found {len(PLUG_DEVICES)} metering plug(s) out of {len(found)} device(s).")
@@ -683,7 +694,16 @@ def poll_plugs():
     async def read_all():
         global last_plug_discovery_at
 
-        if not PLUG_DEVICES and time.time() - last_plug_discovery_at >= PLUG_DISCOVERY_BACKOFF:
+        # Look again when a plug we have seen before is missing, not only when
+        # every plug is. A DHCP lease change or a dropped connection takes one
+        # plug away while the others carry on, and that is exactly the case the
+        # old condition could not see.
+        missing = known_plug_macs - set(PLUG_DEVICES)
+
+        if (missing or not PLUG_DEVICES) and time.time() - last_plug_discovery_at >= PLUG_DISCOVERY_BACKOFF:
+            if missing:
+                print(f"Plug(s) missing since last discovery: {', '.join(sorted(missing))}. Looking again.")
+
             last_plug_discovery_at = time.time()
             await init_plugs()
 
