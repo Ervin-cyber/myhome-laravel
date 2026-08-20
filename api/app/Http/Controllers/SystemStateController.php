@@ -24,6 +24,10 @@ class SystemStateController extends Controller
             'rooms' => Room::with('airConditioners')->orderBy('sort_order')->get(),
             'air_conditioners' => AirConditioner::orderBy('id')->get(),
             'smart_plugs' => SmartPlug::climate(),
+            // Settings the browser needs but should not have compiled into it.
+            'client' => [
+                'idle_minutes' => config('climate.dashboard_idle_minutes'),
+            ],
         ], 200);
     }
 

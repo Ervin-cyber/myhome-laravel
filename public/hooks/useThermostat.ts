@@ -36,6 +36,13 @@ const LIVE_REARM_MS = 4 * 60 * 1000;
  */
 const IDLE_AFTER_MS = 3 * 60 * 1000;
 
+const idleWindow = (minutes: number | null | undefined) =>
+    // Null is "never pause" -- a wall display, where the whole point is that it
+    // keeps showing what the house is doing without anybody being there.
+    minutes === null ? Number.POSITIVE_INFINITY
+        : minutes === undefined ? IDLE_AFTER_MS
+            : minutes * 60_000;
+
 /** What counts as touching the page. Cheap events, all passive. */
 const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'] as const;
 
@@ -73,6 +80,9 @@ export function useThermostat() {
     const idleRef = useRef(false);
     const lastTouchRef = useRef(Date.now());
     const pendingRef = useRef(false);
+    // Served by the API so it can be changed with config:clear rather than a
+    // rebuild -- a NEXT_PUBLIC_ value would be compiled into the bundle.
+    const idleAfterRef = useRef(IDLE_AFTER_MS);
 
     // Whether anything is still resolving, kept where the interval can read it.
     // A command waiting to be confirmed, a compressor counting down, a boost
@@ -96,6 +106,8 @@ export function useThermostat() {
             rooms: stateData?.rooms ?? prev.rooms,
             smartPlugs: stateData?.smart_plugs ?? prev.smartPlugs,
         }));
+
+        idleAfterRef.current = idleWindow(stateData?.client?.idle_minutes);
     }, []);
 
     const fetchClient = useCallback(async (url: string, options: RequestInit = {}) => {
@@ -205,7 +217,7 @@ export function useThermostat() {
             // command waiting to be confirmed, a compressor counting down, a
             // boost running out -- those are the moments somebody is most
             // likely watching without touching anything.
-            const untouched = Date.now() - lastTouchRef.current > IDLE_AFTER_MS;
+            const untouched = Date.now() - lastTouchRef.current > idleAfterRef.current;
 
             if (untouched && !pendingRef.current) {
                 if (!idleRef.current) {

@@ -243,6 +243,12 @@ export interface TemperatureResponse {
     created_by?: number;
     updated_by?: number;
 }
+/** Settings the browser needs but should not have compiled into it. */
+export interface ClientSettings {
+    /** Minutes of no interaction before live updates pause. Null never pauses. */
+    idle_minutes: number | null;
+}
+
 export interface SystemStateResponse {
     heating_on: boolean;
     cooling_on: boolean;
@@ -254,6 +260,7 @@ export interface SystemStateResponse {
     air_conditioners?: AirConditioner[];
     rooms?: Room[];
     smart_plugs?: SmartPlug[];
+    client?: ClientSettings;
 }
 
 export interface FetchLatestDataResponse {
