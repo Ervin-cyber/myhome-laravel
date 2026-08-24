@@ -386,6 +386,48 @@ class ClimateServiceTest extends TestCase
         $this->assertTrue($this->unitFor($this->climate->evaluate(), $ac->mac)['power']);
     }
 
+    /**
+     * A Gree stores an integer Celsius plus a half-degree flag, and both units
+     * here were asked directly whether they keep that flag while set to Celsius.
+     * They do, so 26.5 is reachable without putting the wall display into
+     * Fahrenheit -- which matters because 26 overshoots and 27 undershoots.
+     */
+    public function test_a_setpoint_is_carried_to_the_nearest_half_degree(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $room = $this->bedroom(['current_temp' => 28]);
+        $ac = $this->unit($room);
+
+        foreach ([26.0 => 26.0, 26.5 => 26.5, 26.3 => 26.5, 26.2 => 26.0, 26.75 => 27.0] as $asked => $expected) {
+            $room->update(['target_temp' => $asked]);
+
+            $this->assertSame(
+                $expected,
+                $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp'],
+                "A room asking for {$asked} should reach the unit as {$expected}."
+            );
+        }
+    }
+
+    public function test_a_setpoint_is_clamped_to_what_a_gree_accepts(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $room = $this->bedroom(['current_temp' => 28]);
+        $ac = $this->unit($room);
+
+        $room->update(['target_temp' => 12]);
+        $this->assertSame(
+            (float) ClimateService::AC_TEMP_MIN,
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']
+        );
+
+        $room->update(['target_temp' => 35]);
+        $this->assertSame(
+            (float) ClimateService::AC_TEMP_MAX,
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']
+        );
+    }
+
     public function test_fan_mode_is_not_held_back_by_the_compressor_guard(): void
     {
         $this->house(['mode' => 'cooling']);

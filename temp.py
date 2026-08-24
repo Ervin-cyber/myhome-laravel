@@ -9,7 +9,7 @@ import websocket
 import os
 import threading
 from greeclimate.discovery import Discovery
-from greeclimate.device import Device, Mode
+from greeclimate.device import Device, Mode, Props
 import greeclimate.device as gree_device
 import asyncio
 from dotenv import load_dotenv
@@ -104,6 +104,37 @@ def _flag(value):
     """A tri-state flag: None stays None rather than collapsing to False."""
     return None if value is None else bool(value)
 
+def read_setpoint(device):
+    """
+    The unit's setpoint, including the half degree greeclimate throws away.
+
+    SetTem holds an integer Celsius and TemRec a half-degree flag. The library
+    reads the pair only in Fahrenheit mode -- _convert_to_units returns the
+    integer untouched otherwise -- so device.target_temperature reports 26 for a
+    unit holding 26.5. Both fields come back in every status reply regardless,
+    so this reads them itself.
+    """
+    whole = device.get_property(Props.TEMP_SET)
+
+    if whole is None:
+        return None
+
+    return float(whole) + (0.5 if device.get_property(Props.TEMP_BIT) else 0.0)
+
+def write_setpoint(device, target):
+    """
+    Set a setpoint that may carry a half degree.
+
+    device.target_temperature would drop it: its setter writes TemRec only when
+    the unit is in Fahrenheit, and putting the wall display into Fahrenheit to
+    reach 26.5 is a worse trade than writing the two fields directly. Both of
+    these units were asked whether they keep the flag in Celsius mode, and both
+    do -- see check_half_degree.py.
+    """
+    whole = int(target)
+    device.set_property(Props.TEMP_SET, whole)
+    device.set_property(Props.TEMP_BIT, 1 if (target - whole) >= 0.5 else 0)
+
 def observed_state(device):
     """
     Everything the unit says about itself, in the vocabulary the API uses.
@@ -115,7 +146,7 @@ def observed_state(device):
     return {
         'power': bool(device.power),
         'mode': MODES_BY_MEMBER.get(getattr(device, 'mode', None)),
-        'target_temp': getattr(device, 'target_temperature', None),
+        'target_temp': read_setpoint(device),
         'fan_speed': FAN_SPEEDS_BY_MEMBER.get(getattr(device, 'fan_speed', None)),
         'swing_v': VERTICAL_SWING_BY_MEMBER.get(getattr(device, 'vertical_swing', None)),
         'swing_h': HORIZONTAL_SWING_BY_MEMBER.get(getattr(device, 'horizontal_swing', None)),
@@ -848,7 +879,10 @@ def desired_state(unit):
 
     return (
         True,
-        int(float(unit.get('target_temp') or 24)),
+        # To the nearest half, matching what the unit can actually hold. Rounded
+        # rather than truncated: int() turned every 26.5 into 26 and the half
+        # would never have survived the comparison, let alone the command.
+        round(float(unit.get('target_temp') or 24) * 2) / 2,
         unit.get('mode') or 'cool',
         unit.get('fan_speed') or 'auto',
         unit.get('swing_v') or 'off',
@@ -895,7 +929,7 @@ async def send_gree_command(ac, desired):
                  xfan, quiet, turbo, power_save) = desired
 
                 apply_setting(device, 'mode', MODES.get(mode))
-                device.target_temperature = target_temp
+                write_setpoint(device, target_temp)
 
                 # Order matters. Quiet and turbo both override the fan speed
                 # field at the unit, so they are cleared before the speed is
