@@ -96,7 +96,7 @@ class AirConditionerTest extends TestCase
         $ac->refresh();
 
         $this->assertSame('Bedroom', $ac->name, 'A rescan must not overwrite a user rename.');
-        $this->assertSame(21, $ac->target_temp);
+        $this->assertSame(21.0, $ac->target_temp);
         $this->assertFalse($ac->enabled);
         $this->assertSame('192.168.1.77', $ac->ip, 'A new DHCP lease should be picked up.');
         $this->assertTrue($ac->online);
@@ -211,7 +211,7 @@ class AirConditionerTest extends TestCase
         $this->postJson("/api/air-conditioners/{$ac->id}", ['target_temp' => 40])
             ->assertStatus(422);
 
-        $this->assertSame(24, $ac->fresh()->target_temp);
+        $this->assertSame(24.0, $ac->fresh()->target_temp);
     }
 
     public function test_update_returns_the_saved_unit(): void

@@ -394,9 +394,16 @@ class ClimateService
      * either — but the unit cannot, so the value is squared up here rather
      * than being sent as-is and silently mangled by the unit.
      */
-    private function unitSetpoint(float $target): int
+    private function unitSetpoint(float $target): float
     {
-        return (int) max(self::AC_TEMP_MIN, min(self::AC_TEMP_MAX, round($target)));
+        $clamped = max(self::AC_TEMP_MIN, min(self::AC_TEMP_MAX, $target));
+
+        // To the nearest half, not the nearest whole. A Gree holds an integer
+        // Celsius plus a half-degree flag, and both units were asked directly
+        // whether they keep that flag in Celsius mode -- they do. Whole degrees
+        // were never the hardware's limit, only the library's, which writes the
+        // flag exclusively in Fahrenheit mode.
+        return round($clamped * 2) / 2;
     }
 
     private function isCoolingDown(AirConditioner $ac): bool

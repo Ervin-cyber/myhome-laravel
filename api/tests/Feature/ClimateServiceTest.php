@@ -205,7 +205,7 @@ class ClimateServiceTest extends TestCase
 
         $bedroomUnit = $this->unitFor($control, $bedroomAc->mac);
         $this->assertTrue($bedroomUnit['power']);
-        $this->assertSame(22, $bedroomUnit['target_temp'], 'The room owns the setpoint.');
+        $this->assertSame(22.0, $bedroomUnit['target_temp'], 'The room owns the setpoint.');
         $this->assertSame('cool', $bedroomUnit['mode']);
 
         $this->assertFalse(
@@ -284,14 +284,25 @@ class ClimateServiceTest extends TestCase
         $bedroom = $this->bedroom(['target_temp' => 21.5, 'current_temp' => 26]);
         $ac = $this->unit($bedroom);
 
-        $this->assertSame(22, $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']);
+        // 21.5 reaches the unit intact now. It used to be rounded to 22,
+        // because greeclimate only writes the half-degree flag in Fahrenheit
+        // mode and we had taken that for the hardware's limit.
+        $this->assertSame(21.5, $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']);
 
         $this->bedroom(['target_temp' => 12, 'current_temp' => 26]);
 
         $this->assertSame(
-            ClimateService::AC_TEMP_MIN,
+            (float) ClimateService::AC_TEMP_MIN,
             $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp'],
             'A target below the unit range must be clamped, not sent and mangled.'
+        );
+
+        $this->bedroom(['target_temp' => 35, 'current_temp' => 26]);
+
+        $this->assertSame(
+            (float) ClimateService::AC_TEMP_MAX,
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp'],
+            'And the same at the top of the range.'
         );
     }
 
@@ -355,7 +366,7 @@ class ClimateServiceTest extends TestCase
 
         $this->assertTrue($unit['power']);
         $this->assertSame('heat', $unit['mode']);
-        $this->assertSame(22, $unit['target_temp']);
+        $this->assertSame(22.0, $unit['target_temp']);
     }
 
     public function test_a_disabled_unit_never_runs(): void
@@ -384,6 +395,35 @@ class ClimateServiceTest extends TestCase
         $ac->update(['power_changed_at' => now()->subSeconds(ClimateService::AC_MIN_OFF_SECONDS + 10)]);
 
         $this->assertTrue($this->unitFor($this->climate->evaluate(), $ac->mac)['power']);
+    }
+
+    /**
+     * A Gree stores an integer Celsius plus a half-degree flag, and both units
+     * here were asked directly whether they keep that flag while set to Celsius.
+     * They do, so 26.5 is reachable without putting the wall display into
+     * Fahrenheit -- which matters because 26 overshoots and 27 undershoots.
+     */
+    public function test_a_setpoint_is_carried_to_the_nearest_half_degree(): void
+    {
+        $this->house(['mode' => 'cooling']);
+        $room = $this->bedroom(['current_temp' => 28]);
+        $ac = $this->unit($room);
+
+        // Pairs rather than a keyed array: PHP casts a float array key to an
+        // integer, so 26.0, 26.5, 26.3 and 26.75 all collapse to 26 and only
+        // the last survives. The first run of this asserted one case and
+        // reported it as five.
+        $cases = [[26.0, 26.0], [26.5, 26.5], [26.3, 26.5], [26.2, 26.0], [26.75, 27.0]];
+
+        foreach ($cases as [$asked, $expected]) {
+            $room->update(['target_temp' => $asked]);
+
+            $this->assertSame(
+                $expected,
+                $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp'],
+                "A room asking for {$asked} should reach the unit as {$expected}."
+            );
+        }
     }
 
     public function test_fan_mode_is_not_held_back_by_the_compressor_guard(): void
@@ -442,7 +482,7 @@ class ClimateServiceTest extends TestCase
         $unit = $this->unitFor($this->climate->evaluate(), $ac->mac);
 
         $this->assertTrue($unit['power']);
-        $this->assertSame(23, $unit['target_temp']);
+        $this->assertSame(23.0, $unit['target_temp']);
     }
 
     public function test_the_document_carries_an_expiry_for_the_pi_watchdog(): void

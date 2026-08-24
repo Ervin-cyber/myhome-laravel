@@ -200,13 +200,18 @@ export default function RoomCard({
     // half degrees or 12°C there would promise something the unit cannot do.
     // The boiler is regulated by us, against a 0.2° deadband, so it can.
     const acDriven = units.length > 0 && (houseMode === 'cooling' || room.heat_source === 'ac');
-    const step = acDriven ? 1 : 0.5;
+    // Halves either way now. A Gree holds an integer Celsius plus a half-degree
+    // flag, and both units were asked directly whether they keep that flag in
+    // Celsius mode -- they do. Whole degrees were the library's limit rather
+    // than the hardware's, and 26 being too cold while 27 was too warm is the
+    // reason any of this was worth finding out.
+    const step = 0.5;
     const min = acDriven ? 16 : 10;
     const max = 30;
 
     // Shown rounded to what will actually be honoured, so a target carried over
     // from the other season does not sit on screen as a number nothing can use.
-    const shownTarget = Math.min(max, Math.max(min, acDriven ? Math.round(room.target_temp) : room.target_temp));
+    const shownTarget = Math.min(max, Math.max(min, Math.round(room.target_temp * 2) / 2));
 
     const setTarget = (next: number) => onUpdateRoom(room.id, {
         target_temp: Math.min(max, Math.max(min, next)),
@@ -282,7 +287,11 @@ export default function RoomCard({
                         −
                     </button>
                     <div className="w-16 text-center">
-                        <span className="font-mono text-2xl text-white">{shownTarget}</span>
+                        {/* One decimal only when there is one, so a whole
+                            degree stays "26" rather than becoming "26.0". */}
+                        <span className="font-mono text-2xl text-white">
+                            {Number.isInteger(shownTarget) ? shownTarget : shownTarget.toFixed(1)}
+                        </span>
                         <span className="block text-[10px] uppercase tracking-wide text-gray-500">Target</span>
                     </div>
                     <button

@@ -225,7 +225,10 @@ class AirConditionerController extends Controller
         $data = $request->validate([
             'room_id' => 'sometimes|nullable|integer|exists:rooms,id',
             'name' => 'sometimes|string|max:64',
-            'target_temp' => 'sometimes|integer|between:16,30',
+            // Halves, not wholes: the unit holds a half-degree flag alongside
+            // the integer, and multiple_of enforces the ladder it can actually
+            // reach rather than accepting 26.3 and quietly storing 26.5.
+            'target_temp' => 'sometimes|numeric|between:16,30|multiple_of:0.5',
             'enabled' => 'sometimes|boolean',
             'heating_on' => 'sometimes|boolean',
             'cooling_on' => 'sometimes|boolean',
