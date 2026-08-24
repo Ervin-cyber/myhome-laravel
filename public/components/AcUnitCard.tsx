@@ -34,10 +34,23 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
     // remote or a dropped packet finally becomes visible.
     const drifted = ac.observed_power !== null && ac.observed_power !== ac.power_on;
 
+    // Ahead of everything else, because nothing else on this card is true while
+    // it holds. Every other label describes what the unit is doing, and a unit
+    // that has stopped answering is not telling us any of it -- what is shown is
+    // the last thing it said before it went quiet.
+    const silence = ac.responding === false
+        ? {
+            label: ac.silent_for && ac.silent_for >= 120
+                ? `Not responding · ${Math.floor(ac.silent_for / 60)} min`
+                : 'Not responding',
+            tone: 'bg-red-500/25 text-red-300',
+        }
+        : null;
+
     // Following the remote is not a fault and must not be dressed as one: the
     // unit is doing what somebody asked and the system has agreed to let it, so
     // it reads as plain state and the marker beside it says who asked.
-    const status = ac.following_remote
+    const status = silence ?? (ac.following_remote
         ? ac.manual_power
             ? { label: 'Running', tone: 'bg-blue-500/20 text-blue-300' }
             : { label: 'Off', tone: 'bg-gray-700/50 text-gray-400' }
@@ -55,7 +68,7 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
                 ? { label: 'Running', tone: 'bg-blue-500/20 text-blue-300' }
                 : ac.enabled
                     ? { label: 'Idle', tone: 'bg-gray-700/50 text-gray-400' }
-                    : { label: 'Parked', tone: 'bg-amber-500/20 text-amber-300' };
+                    : { label: 'Parked', tone: 'bg-amber-500/20 text-amber-300' });
 
     const profile = ac.turbo ? 'turbo' : ac.quiet ? 'quiet' : 'normal';
 

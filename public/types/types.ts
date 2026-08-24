@@ -162,6 +162,16 @@ export interface AirConditioner {
     hold_reason: HoldReason | null;
     /** Seconds until the compressor guard releases, or null when it is not holding. */
     cooling_down_for: number | null;
+    /**
+     * Whether the unit is still answering the Pi. Null means it has never been
+     * asked, which is the state for the first minute after a restart.
+     *
+     * Different from `online`, which is whether a discovery scan found it. A
+     * Gree with a wedged wifi module can be online and answer nothing.
+     */
+    responding: boolean | null;
+    /** How long it has been silent, in seconds, or null while it is answering. */
+    silent_for: number | null;
     /** Settings whose last command the unit did not take. Nothing retries them. */
     rejected: SettableField[];
     /**

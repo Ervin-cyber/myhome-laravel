@@ -48,12 +48,14 @@ const MODE_LABELS: Record<string, string> = {
  */
 function summariseUnits(units: AirConditioner[]): { title: string; detail: string; warn: boolean } {
     const offline = units.filter((ac) => !ac.online);
+    const silent = units.filter((ac) => ac.responding === false);
     const byRemote = units.filter((ac) => ac.following_remote);
 
     if (units.length === 1) {
         const [ac] = units;
         const fan = FAN_SPEEDS.find((f) => f.value === ac.fan_speed)?.label ?? ac.fan_speed;
 
+        if (ac.responding === false) return { title: ac.name, detail: 'not responding', warn: true };
         if (!ac.online) return { title: ac.name, detail: 'offline', warn: true };
         // Ahead of "parked", because it is the more recent decision and the one
         // that explains why the room is not doing what the card otherwise says.
@@ -67,6 +69,7 @@ function summariseUnits(units: AirConditioner[]): { title: string; detail: strin
 
     const title = `${units.length} units`;
 
+    if (silent.length > 0) return { title, detail: `${silent.length} not responding`, warn: true };
     if (offline.length > 0) return { title, detail: `${offline.length} offline`, warn: true };
     if (byRemote.length > 0) return { title, detail: `${byRemote.length} by remote`, warn: true };
 
@@ -127,6 +130,8 @@ export default function RoomCard({
     // Taken from the unit rather than worked out here. The loop decides, and a
     // second implementation of its rules living in the dashboard would be free
     // to drift from it and to be confidently wrong.
+    const notResponding = units.filter((ac) => ac.responding === false);
+
     const held = units.find((ac) => ac.hold_reason)?.hold_reason ?? null;
     const releasesIn = units.find((ac) => ac.cooling_down_for)?.cooling_down_for ?? null;
 
@@ -220,19 +225,7 @@ export default function RoomCard({
 
                     {/* A footnote, not the headline. The state above says what
                         the room is doing; this only says who asked for it. */}
-                    {/* The reason, in full, where there is room for it. The badge above
-                has space for three words; this is where somebody who wants to
-                know what to press about it can find out. */}
-            {held && held !== 'room_off' && (
-                <p className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                    {HOLD_EXPLANATIONS[held]}
-                    {releasesIn !== null && (
-                        <span className="font-medium"> Ready in {Math.max(1, Math.ceil(releasesIn / 60))} min.</span>
-                    )}
-                </p>
-            )}
-
-            {byRemote.length > 0 && (
+                    {byRemote.length > 0 && (
                         <span className="ml-1.5 inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-xs font-medium text-violet-300">
                             by remote
                         </span>
@@ -302,6 +295,27 @@ export default function RoomCard({
                     </button>
                 </div>
             </div>
+
+            {/* Above the hold reason, because a unit that has stopped answering
+                is not being held by anything -- it has simply gone quiet, and
+                everything else on this card is the last thing it said. Says what
+                to do about it, since that part is not obvious: restarting the
+                router does nothing when the module is wedged rather than
+                disconnected. */}
+            {notResponding.length > 0 && (
+                <p className="mt-3 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                    <span className="font-medium">
+                        {notResponding.length === 1 ? notResponding[0].name : `${notResponding.length} units`}
+                        {' stopped answering'}
+                        {notResponding[0].silent_for && notResponding[0].silent_for >= 120
+                            ? ` ${Math.floor(notResponding[0].silent_for / 60)} minutes ago.`
+                            : '.'}
+                    </span>
+                    {' '}Everything below is the last it sent. A Gree&apos;s wifi can lock up while
+                    the unit runs on — cutting its power is what clears that, and restarting the
+                    router will not.
+                </p>
+            )}
 
             {/* The reason, in full, where there is room for it. The badge above
                 has space for three words; this is where somebody who wants to

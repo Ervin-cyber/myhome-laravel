@@ -62,6 +62,19 @@ class AirConditioner extends Model
     public const MIN_OFF_SECONDS = 180;
 
     /**
+     * How long a unit may go without answering before it is called unresponsive.
+     *
+     * The Pi reads every unit every minute whether or not anybody is watching,
+     * so five missed answers is a real silence rather than a quiet patch.
+     *
+     * This is a different question from `online`, which says whether a
+     * discovery scan found the unit on the network. A Gree whose wifi module
+     * has locked up is the case that matters here and it can be either: still
+     * announcing itself and answering nothing, or gone entirely.
+     */
+    public const RESPONSIVE_WITHIN_SECONDS = 300;
+
+    /**
      * How long a command has to land before we believe the unit over ourselves.
      *
      * Until it elapses the unit is still reporting what it held a moment ago,
@@ -117,7 +130,11 @@ class AirConditioner extends Model
         'manual_since' => 'datetime',
     ];
 
-    protected $appends = ['calibrated_temp', 'observed_power', 'following_remote', 'awaiting', 'rejected', 'cooling_down_for'];
+    protected $appends = [
+        'calibrated_temp', 'observed_power', 'following_remote',
+        'awaiting', 'rejected', 'cooling_down_for',
+        'responding', 'silent_for',
+    ];
 
     public function room(): BelongsTo
     {
@@ -186,6 +203,34 @@ class AirConditioner extends Model
         $observed = $this->freshObservation();
 
         return isset($observed['power']) ? (bool) $observed['power'] : null;
+    }
+
+    /**
+     * Whether the unit is still answering, or null if it has never been asked.
+     *
+     * Null rather than false for a unit nobody has read yet: a Pi that has just
+     * started has no opinion, and reporting one would put "not responding" on
+     * every card for the first minute after a restart.
+     *
+     * False is worth acting on. A Gree's wifi module can lock up while the unit
+     * itself carries on — an hour of that is invisible from the app and from the
+     * Gree app alike, and the only thing that clears it is cutting its power.
+     */
+    public function getRespondingAttribute(): ?bool
+    {
+        if ($this->observed_at === null) {
+            return null;
+        }
+
+        return $this->observed_at->diffInSeconds(now()) <= self::RESPONSIVE_WITHIN_SECONDS;
+    }
+
+    /** How long it has been silent, in seconds, or null while it is answering. */
+    public function getSilentForAttribute(): ?int
+    {
+        return $this->responding === false
+            ? (int) $this->observed_at->diffInSeconds(now())
+            : null;
     }
 
     /**
