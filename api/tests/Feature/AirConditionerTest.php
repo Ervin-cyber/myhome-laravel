@@ -120,18 +120,76 @@ class AirConditionerTest extends TestCase
         $this->assertSame('Living', AirConditioner::where('mac', 'aa:bb:cc:dd:ee:02')->value('name'));
     }
 
-    public function test_sync_flags_missing_units_offline_instead_of_deleting(): void
+    public function test_a_complete_sync_flags_missing_units_offline_instead_of_deleting(): void
     {
         AirConditioner::create($this->device(['mac' => 'aa:bb:cc:dd:ee:01', 'name' => 'Bedroom']));
         AirConditioner::create($this->device(['mac' => 'aa:bb:cc:dd:ee:02', 'name' => 'Living', 'ip' => '192.168.1.51']));
 
         $this->postJson('/api/air-conditioners/sync', [
             'devices' => [$this->device(['mac' => 'aa:bb:cc:dd:ee:01', 'name' => 'Bedroom'])],
+            'complete' => true,
         ])->assertOk()->assertJson(['synced' => 1, 'offline' => 1]);
 
         $this->assertSame(2, AirConditioner::count());
         $this->assertTrue(AirConditioner::where('mac', 'aa:bb:cc:dd:ee:01')->value('online'));
         $this->assertFalse((bool) AirConditioner::where('mac', 'aa:bb:cc:dd:ee:02')->value('online'));
+    }
+
+    /**
+     * Only a discovery scan has looked at the whole network, so only a discovery
+     * scan may conclude that a unit is gone.
+     *
+     * Three of the Pi's four sync callers report just the units that answered
+     * this pass, and under "command only when asked" a command pass carries one
+     * unit. Sweeping on those payloads meant commanding the bedroom declared the
+     * living room offline.
+     */
+    public function test_a_partial_sync_leaves_the_units_it_did_not_mention_alone(): void
+    {
+        AirConditioner::create($this->device(['mac' => 'aa:bb:cc:dd:ee:01', 'name' => 'Bedroom']));
+        AirConditioner::create($this->device(['mac' => 'aa:bb:cc:dd:ee:02', 'name' => 'Living', 'ip' => '192.168.1.51']));
+
+        $this->postJson('/api/air-conditioners/sync', [
+            'devices' => [$this->device(['mac' => 'aa:bb:cc:dd:ee:01', 'name' => 'Bedroom'])],
+        ])->assertOk()->assertJson(['synced' => 1, 'offline' => 0]);
+
+        $this->assertTrue((bool) AirConditioner::where('mac', 'aa:bb:cc:dd:ee:02')->value('online'));
+    }
+
+    /**
+     * A unit that has stopped answering is the case that cost an hour: a Gree's
+     * wifi module can wedge while the unit runs on, and nothing downstream
+     * noticed. `responding` is the signal, and it is distinct from `online`.
+     */
+    public function test_a_unit_that_has_stopped_answering_is_not_responding(): void
+    {
+        $ac = AirConditioner::create($this->device());
+
+        $ac->forceFill(['observed_at' => null])->save();
+        $this->assertNull($ac->fresh()->responding, 'never asked is not the same as not answering');
+        $this->assertNull($ac->fresh()->silent_for);
+
+        $ac->forceFill(['observed_at' => now()->subSeconds(AirConditioner::RESPONSIVE_WITHIN_SECONDS - 5)])->save();
+        $this->assertTrue($ac->fresh()->responding);
+        $this->assertNull($ac->fresh()->silent_for);
+
+        $ac->forceFill(['observed_at' => now()->subSeconds(AirConditioner::RESPONSIVE_WITHIN_SECONDS + 5)])->save();
+        $this->assertFalse($ac->fresh()->responding);
+        $this->assertGreaterThan(AirConditioner::RESPONSIVE_WITHIN_SECONDS, $ac->fresh()->silent_for);
+    }
+
+    /** Answering and being found by a scan are different questions. */
+    public function test_a_unit_can_be_online_and_still_not_responding(): void
+    {
+        $ac = AirConditioner::create($this->device());
+
+        $ac->forceFill([
+            'online' => true,
+            'observed_at' => now()->subSeconds(AirConditioner::RESPONSIVE_WITHIN_SECONDS + 60),
+        ])->save();
+
+        $this->assertTrue((bool) $ac->fresh()->online);
+        $this->assertFalse($ac->fresh()->responding);
     }
 
     public function test_sync_records_the_units_own_indoor_reading(): void
