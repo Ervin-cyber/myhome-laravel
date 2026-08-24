@@ -205,7 +205,7 @@ class ClimateServiceTest extends TestCase
 
         $bedroomUnit = $this->unitFor($control, $bedroomAc->mac);
         $this->assertTrue($bedroomUnit['power']);
-        $this->assertSame(22, $bedroomUnit['target_temp'], 'The room owns the setpoint.');
+        $this->assertSame(22.0, $bedroomUnit['target_temp'], 'The room owns the setpoint.');
         $this->assertSame('cool', $bedroomUnit['mode']);
 
         $this->assertFalse(
@@ -284,14 +284,25 @@ class ClimateServiceTest extends TestCase
         $bedroom = $this->bedroom(['target_temp' => 21.5, 'current_temp' => 26]);
         $ac = $this->unit($bedroom);
 
-        $this->assertSame(22, $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']);
+        // 21.5 reaches the unit intact now. It used to be rounded to 22,
+        // because greeclimate only writes the half-degree flag in Fahrenheit
+        // mode and we had taken that for the hardware's limit.
+        $this->assertSame(21.5, $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']);
 
         $this->bedroom(['target_temp' => 12, 'current_temp' => 26]);
 
         $this->assertSame(
-            ClimateService::AC_TEMP_MIN,
+            (float) ClimateService::AC_TEMP_MIN,
             $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp'],
             'A target below the unit range must be clamped, not sent and mangled.'
+        );
+
+        $this->bedroom(['target_temp' => 35, 'current_temp' => 26]);
+
+        $this->assertSame(
+            (float) ClimateService::AC_TEMP_MAX,
+            $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp'],
+            'And the same at the top of the range.'
         );
     }
 
@@ -355,7 +366,7 @@ class ClimateServiceTest extends TestCase
 
         $this->assertTrue($unit['power']);
         $this->assertSame('heat', $unit['mode']);
-        $this->assertSame(22, $unit['target_temp']);
+        $this->assertSame(22.0, $unit['target_temp']);
     }
 
     public function test_a_disabled_unit_never_runs(): void
@@ -398,7 +409,13 @@ class ClimateServiceTest extends TestCase
         $room = $this->bedroom(['current_temp' => 28]);
         $ac = $this->unit($room);
 
-        foreach ([26.0 => 26.0, 26.5 => 26.5, 26.3 => 26.5, 26.2 => 26.0, 26.75 => 27.0] as $asked => $expected) {
+        // Pairs rather than a keyed array: PHP casts a float array key to an
+        // integer, so 26.0, 26.5, 26.3 and 26.75 all collapse to 26 and only
+        // the last survives. The first run of this asserted one case and
+        // reported it as five.
+        $cases = [[26.0, 26.0], [26.5, 26.5], [26.3, 26.5], [26.2, 26.0], [26.75, 27.0]];
+
+        foreach ($cases as [$asked, $expected]) {
             $room->update(['target_temp' => $asked]);
 
             $this->assertSame(
@@ -407,25 +424,6 @@ class ClimateServiceTest extends TestCase
                 "A room asking for {$asked} should reach the unit as {$expected}."
             );
         }
-    }
-
-    public function test_a_setpoint_is_clamped_to_what_a_gree_accepts(): void
-    {
-        $this->house(['mode' => 'cooling']);
-        $room = $this->bedroom(['current_temp' => 28]);
-        $ac = $this->unit($room);
-
-        $room->update(['target_temp' => 12]);
-        $this->assertSame(
-            (float) ClimateService::AC_TEMP_MIN,
-            $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']
-        );
-
-        $room->update(['target_temp' => 35]);
-        $this->assertSame(
-            (float) ClimateService::AC_TEMP_MAX,
-            $this->unitFor($this->climate->evaluate(), $ac->mac)['target_temp']
-        );
     }
 
     public function test_fan_mode_is_not_held_back_by_the_compressor_guard(): void
@@ -484,7 +482,7 @@ class ClimateServiceTest extends TestCase
         $unit = $this->unitFor($this->climate->evaluate(), $ac->mac);
 
         $this->assertTrue($unit['power']);
-        $this->assertSame(23, $unit['target_temp']);
+        $this->assertSame(23.0, $unit['target_temp']);
     }
 
     public function test_the_document_carries_an_expiry_for_the_pi_watchdog(): void
