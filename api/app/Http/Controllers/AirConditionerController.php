@@ -29,6 +29,12 @@ class AirConditionerController extends Controller
     {
         $payload = $request->validate([
             'devices' => 'present|array',
+            // Whether the Pi looked at the whole network or only reported the
+            // units that answered this pass. Absent on older payloads, which
+            // were all treated as complete -- and that is the bug: a command
+            // pass carries only the units it spoke to, so commanding one unit
+            // declared the other one offline.
+            'complete' => 'sometimes|boolean',
             'devices.*.mac' => 'required|string|max:32',
             'devices.*.name' => 'required|string|max:64',
             'devices.*.ip' => 'required|ip',
@@ -119,9 +125,13 @@ class AirConditionerController extends Controller
             $seenIds[] = $ac->id;
         }
 
-        $wentOffline = AirConditioner::whereNotIn('id', $seenIds)
-            ->where('online', true)
-            ->update(['online' => false]);
+        // Only a discovery scan has looked everywhere, so only a discovery scan
+        // may conclude that a unit is gone.
+        $wentOffline = ($payload['complete'] ?? false)
+            ? AirConditioner::whereNotIn('id', $seenIds)
+                ->where('online', true)
+                ->update(['online' => false])
+            : 0;
 
         // Rooms reading their temperature off a Gree unit depend on this sync.
         Room::where('temp_source', 'ac')->get()->each->refreshCurrentTemp();

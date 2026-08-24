@@ -210,6 +210,12 @@ last_observed_power = {}
 # make no noise at all.
 OBSERVE_INTERVAL = 60
 
+# Consecutive unanswered reads before a unit is called wedged rather than busy.
+# At one read a minute that is five minutes of silence, which is well past any
+# ordinary hiccup and far short of the hour it took to notice by hand.
+SILENT_READS_BEFORE_ALERT = 5
+silent_reads = {}
+
 # While a dashboard is open the API asks us to interrogate the units directly,
 # so the page shows what they actually report rather than what we last told
 # them. The window is carried in the control document and expires on its own.
@@ -749,14 +755,22 @@ def plug_poller():
             poll_plugs()
             globals()['last_plug_poll_at'] = time.time()
 
-def post_ac_sync(devices):
-    """Report discovered units (and their indoor readings) to the API."""
+def post_ac_sync(devices, complete=False):
+    """
+    Report units and their readings to the API.
+
+    `complete` says whether this is every unit on the network or only the ones
+    that happened to answer this pass. The API marks anything missing from a
+    complete sync as offline, and only a discovery scan can honestly claim to
+    have looked everywhere -- a command pass carries just the units it spoke to,
+    which under "command only when asked" is usually one of the two.
+    """
     if not devices:
         return
 
     try:
         requests.post(f"{API_ENDPOINT}/air-conditioners/sync",
-                      json={'devices': devices},
+                      json={'devices': devices, 'complete': bool(complete)},
                       headers=Headers,
                       timeout=5)
         print(f"Synced {len(devices)} AC units to the database.")
@@ -814,7 +828,9 @@ async def init_gree_ac():
                 print(f"Error pairing {device_info.ip}: {err_msg}")
                 send_ntfy_alert(f"Error pairing AC unit {device_info.ip}: {err_msg}", "warning", key=f"ac_init_{device_info.ip}")
 
-        post_ac_sync(devices_to_sync)
+        # The only caller that has looked at the whole network, and so the only
+        # one entitled to have the API call anything missing offline.
+        post_ac_sync(devices_to_sync, complete=True)
 
     except Exception as e:
         print(f"Error during search: {e}")
@@ -1285,6 +1301,37 @@ def live_poller():
         if time.time() < live_until:
             poll_unit_state()
 
+def note_silence(unit):
+    """
+    Count consecutive unanswered reads, and say so once when it becomes a fault.
+
+    A Gree's wifi module can lock up while the unit itself carries on running.
+    Nothing downstream notices: the app shows the last thing it was told, the
+    Gree app says offline, and restarting the router does not help because the
+    module is not disconnected, it is wedged. The only thing that clears it is
+    cutting the unit's power -- which, here, means the plug the units are on.
+
+    An hour of that went unnoticed. This is the alert that would have said so in
+    five minutes.
+    """
+    mac = unit.get('mac')
+    silent_reads[mac] = silent_reads.get(mac, 0) + 1
+
+    if silent_reads[mac] != SILENT_READS_BEFORE_ALERT:
+        # Once, on the way past the threshold. send_ntfy_alert has its own hour
+        # of cooldown, but there is no reason to keep handing it the same news.
+        return
+
+    name = unit.get('name') or mac
+
+    print(f"WARNING: {name} has not answered {SILENT_READS_BEFORE_ALERT} reads.")
+    send_ntfy_alert(
+        f"{name} has stopped answering. Its wifi module may be wedged -- "
+        f"power-cycling the unit is what clears that.",
+        "warning",
+        key=f"ac_silent_{mac}",
+    )
+
 def observe_units(units):
     """
     Ask each unit what it is doing, and report what they said.
@@ -1311,7 +1358,14 @@ def observe_units(units):
                     temperature = device.current_temperature
                 except Exception as exc:
                     print(f"[{unit.get('ip')}] read failed: {type(exc).__name__}: {exc}")
+                    note_silence(unit)
                     continue
+
+                if silent_reads.pop(unit.get('mac'), 0) >= SILENT_READS_BEFORE_ALERT:
+                    print(f"[{unit.get('ip')}] answering again.")
+
+                    send_ntfy_alert(f"{unit.get('name') or unit.get('mac')} is answering again",
+                                    "white_check_mark", key=f"ac_silent_{unit.get('mac')}")
 
                 entry = {
                     'mac': unit['mac'],
