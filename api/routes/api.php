@@ -8,6 +8,7 @@ use App\Http\Controllers\TemperatureController;
 use App\Http\Controllers\AirConditionerController;
 use App\Http\Controllers\RoomController;
 use App\Http\Controllers\SmartPlugController;
+use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login'])
@@ -44,4 +45,13 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
     Route::get('/stats', [StatsController::class, 'index']);
 
     Route::get('/params', [PiController::class, 'getParamsForPi']);
+
+    Route::middleware('can:admin')->prefix('admin')->group(function () {
+        Route::get('/users', [UserController::class, 'index']);
+        Route::post('/users', [UserController::class, 'store']);
+        Route::post('/users/{id}', [UserController::class, 'update'])
+            ->whereNumber('id');
+        Route::delete('/users/{id}', [UserController::class, 'destroy'])
+            ->whereNumber('id');
+    });
 });

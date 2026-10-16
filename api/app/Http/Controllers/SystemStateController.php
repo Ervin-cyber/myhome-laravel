@@ -10,6 +10,7 @@ use App\Models\SmartPlug;
 use App\Models\SystemState;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Gate;
 
 class SystemStateController extends Controller
 {
@@ -43,7 +44,28 @@ class SystemStateController extends Controller
         }
 
         $state = SystemState::firstOrCreate();
+
+        // A row created just now carries none of the column defaults in memory,
+        // so its mode would read as null and every mode sent as a change.
+        if ($state->wasRecentlyCreated) {
+            $state->refresh();
+        }
+
         $oldState = $state->replicate();
+
+        // Only a change is guarded, not the key: a member switching the house
+        // on or off may still send the mode it already has.
+        if (isset($data['mode']) && $data['mode'] !== $state->mode) {
+            Gate::authorize('admin');
+        }
+
+        // A settings-page choice like the season, and guarded the same way.
+        foreach (['show_air_conditioners', 'show_power_usage'] as $display) {
+            if (isset($data[$display])) {
+                Gate::authorize('admin');
+                $state->{$display} = $data[$display];
+            }
+        }
 
         // Switching the house, or turning the season around, is as deliberate
         // as an instruction gets, and it takes every unit back off the handset.

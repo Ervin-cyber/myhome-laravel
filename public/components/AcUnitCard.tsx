@@ -2,7 +2,7 @@
 
 import { JSX } from 'react';
 import { AirConditioner, FAN_SPEEDS, FanSpeed, HOLD_LABELS, SettableField, SWING_HORIZONTAL, SWING_VERTICAL, SwingHorizontal, SwingVertical } from '@/types/types';
-import { formatAge, isStale } from '@/lib/utils';
+import { formatAge, formatDuration, isStale } from '@/lib/utils';
 import ACUnitIcon from './ACUnitIcon';
 
 interface Props {
@@ -41,7 +41,7 @@ export default function AcUnitCard({ ac, isPending, onUpdate }: Props): JSX.Elem
     const silence = ac.responding === false
         ? {
             label: ac.silent_for && ac.silent_for >= 120
-                ? `Not responding · ${Math.floor(ac.silent_for / 60)} min`
+                ? `Not responding · ${formatDuration(ac.silent_for)}`
                 : 'Not responding',
             tone: 'bg-red-500/25 text-red-300',
         }

@@ -1,6 +1,13 @@
+export type Role = 'admin' | 'member';
+
 export interface User {
-    uid: string;
+    id: number;
+    name: string;
     email: string;
+    role: Role;
+    created_at: string | null;
+    /** Only on the users list. The Pi signs in as an ordinary account. */
+    tokens_count?: number;
 }
 
 export type Mode = 'heating' | 'cooling';
@@ -232,6 +239,9 @@ export interface ThermostatData {
     cooling: boolean;
     mode: Mode;
     enabled: boolean;
+    /** Display only; hidden units are still run by the control loop. */
+    showAirConditioners: boolean;
+    showPowerUsage: boolean;
     hvacUntil: number;
     lastUpdated: Date | null;
     airConditioners: AirConditioner[];
@@ -264,6 +274,8 @@ export interface SystemStateResponse {
     cooling_on: boolean;
     mode: Mode;
     enabled: boolean;
+    show_air_conditioners?: boolean;
+    show_power_usage?: boolean;
     target_temp: number;
     hvac_until: number;
     timestamp?: string;
@@ -286,6 +298,8 @@ export interface LiveReadingEvent {
         cooling_on: boolean;
         mode: Mode;
         enabled: boolean;
+        show_air_conditioners?: boolean;
+        show_power_usage?: boolean;
         set_temp: number;
         hvac_until: number;
         air_conditioners: AirConditioner[];

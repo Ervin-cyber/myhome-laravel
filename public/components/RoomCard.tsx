@@ -2,7 +2,7 @@
 
 import { JSX, useEffect, useState } from 'react';
 import { AirConditioner, FAN_SPEEDS, HOLD_EXPLANATIONS, HOLD_LABELS, HoldReason, Mode, ModeOverride, Room } from '@/types/types';
-import { formatAge, isStale } from '@/lib/utils';
+import { formatAge, formatDuration, isStale } from '@/lib/utils';
 import AcUnitCard from './AcUnitCard';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -11,6 +11,8 @@ interface Props {
     room: Room;
     houseMode: Mode;
     houseEnabled: boolean;
+    /** House setting. Display only: hidden units are still run as before. */
+    showAirConditioners: boolean;
     isPending: boolean;
     pendingAcIds: number[];
     onUpdateRoom: (roomId: number, body: Partial<Room>) => void;
@@ -104,6 +106,7 @@ export default function RoomCard({
     room,
     houseMode,
     houseEnabled,
+    showAirConditioners,
     isPending,
     pendingAcIds,
     onUpdateRoom,
@@ -114,6 +117,12 @@ export default function RoomCard({
 
     const active = (houseEnabled && room.enabled) || room.is_boosting;
     const units = room.air_conditioners ?? [];
+
+    // Everything on this card that talks about the units themselves -- their
+    // list, their mode buttons, their warnings, their own sensor readings --
+    // goes with the house setting. The room's temperature, target and timer
+    // stay, since those are the room's whether or not a unit acts on them.
+    const unitsShown = showAirConditioners && units.length > 0;
 
     // Worth saying on the room card rather than only inside the unit list: it
     // is the reason the room is not doing what the rest of this card implies,
@@ -185,7 +194,7 @@ export default function RoomCard({
             && (its === 'heat' || its === 'cool')
             && its !== (houseMode === 'heating' ? 'heat' : 'cool');
     });
-    const unitReadings = room.temp_source === 'ac'
+    const unitReadings = room.temp_source === 'ac' || !showAirConditioners
         ? []
         : units
             .filter((ac) => ac.calibrated_temp !== null)
@@ -230,7 +239,7 @@ export default function RoomCard({
 
                     {/* A footnote, not the headline. The state above says what
                         the room is doing; this only says who asked for it. */}
-                    {byRemote.length > 0 && (
+                    {unitsShown && byRemote.length > 0 && (
                         <span className="ml-1.5 inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-xs font-medium text-violet-300">
                             by remote
                         </span>
@@ -311,13 +320,17 @@ export default function RoomCard({
                 to do about it, since that part is not obvious: restarting the
                 router does nothing when the module is wedged rather than
                 disconnected. */}
-            {notResponding.length > 0 && (
+            {/* Not while the season has no use for the units. A unit kept
+                switched off at the wall all winter is silent by design, and a
+                red banner for three weeks teaches nobody anything except to
+                ignore red banners. The unit list still says so if opened. */}
+            {unitsShown && unitsUsable && notResponding.length > 0 && (
                 <p className="mt-3 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
                     <span className="font-medium">
                         {notResponding.length === 1 ? notResponding[0].name : `${notResponding.length} units`}
                         {' stopped answering'}
                         {notResponding[0].silent_for && notResponding[0].silent_for >= 120
-                            ? ` ${Math.floor(notResponding[0].silent_for / 60)} minutes ago.`
+                            ? ` ${formatDuration(notResponding[0].silent_for)} ago.`
                             : '.'}
                     </span>
                     {' '}Everything below is the last it sent. A Gree&apos;s wifi can lock up while
@@ -329,7 +342,9 @@ export default function RoomCard({
             {/* The reason, in full, where there is room for it. The badge above
                 has space for three words; this is where somebody who wants to
                 know what to press about it can find out. */}
-            {held && held !== 'room_off' && (
+            {/* Not for radiators either: that is the season working as
+                intended, said every day all winter, with nothing to press. */}
+            {unitsShown && held && held !== 'room_off' && held !== 'radiators' && (
                 <p className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                     {HOLD_EXPLANATIONS[held]}
                     {releasesIn !== null && (
@@ -338,7 +353,7 @@ export default function RoomCard({
                 </p>
             )}
 
-            {byRemote.length > 0 && (
+            {unitsShown && byRemote.length > 0 && (
                 <p className="mt-3 rounded-xl border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-xs text-violet-200">
                     {byRemote.length === units.length && units.length === 1
                         ? `Switched ${byRemote[0].manual_power ? 'on' : 'off'} by remote.`
@@ -347,7 +362,11 @@ export default function RoomCard({
                 </p>
             )}
 
-            {units.length > 0 && (
+            {/* Hidden while the units have nothing to do this season, so a
+                stray tap on Dry cannot start a unit in a radiator room in
+                winter. Shown again if a dry or fan choice is already standing,
+                because that is the one thing that would be left running. */}
+            {unitsShown && unitsUsable && (
                 <div className="mt-4">
                     <span className="text-[10px] uppercase tracking-wide text-gray-500">
                         Mode
@@ -417,7 +436,7 @@ export default function RoomCard({
                 </div>
             </div>
 
-            {units.length > 0 && (
+            {unitsShown && (
                 <>
                     <button
                         onClick={() => setShowUnits((open) => !open)}

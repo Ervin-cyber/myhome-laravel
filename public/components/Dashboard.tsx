@@ -4,14 +4,16 @@ import { formatAge, getHoursFromSeconds, getMinutesFromSeconds } from '@/lib/uti
 import { getThemeColors } from '@/lib/themeColors';
 import LogoutIcon from '@mui/icons-material/Logout';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
+import SettingsIcon from '@mui/icons-material/Settings';
+import Link from 'next/link';
 import { JSX } from 'react';
 import { signOut } from '../actions/auth';
+import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useThermostat } from '../hooks/useThermostat';
 import HeatingBorder from './HeatingBorder';
 import HeatingIcon from './HeatingOnIcon';
 import StatCard from './StatCard';
 import LoadingSpinner from './LoadingSpinner';
-import ModeToggle from './ModeToggle';
 import ACUnitIcon from './ACUnitIcon';
 import RoomCard from './RoomCard';
 import PowerCard from './PowerCard';
@@ -23,7 +25,6 @@ export default function Dashboard(): JSX.Element {
         isSaving,
         pendingAcIds,
         pendingRoomIds,
-        changeMode,
         togglePower,
         updateAcState,
         updateRoomState,
@@ -31,8 +32,9 @@ export default function Dashboard(): JSX.Element {
         idle,
         resume,
     } = useThermostat();
+    const { isAdmin } = useCurrentUser();
 
-    const { heating, cooling, mode, enabled, lastUpdated, airConditioners, rooms, smartPlugs } = data;
+    const { heating, cooling, mode, enabled, showAirConditioners, showPowerUsage, lastUpdated, airConditioners, rooms, smartPlugs } = data;
 
     const colors = getThemeColors(mode) || { gradient: 'from-gray-700 to-gray-800', shadowColor: 'shadow-gray-900', text: 'text-gray-400' };
     const isActive = (mode === 'heating' && heating) || (mode === 'cooling' && cooling);
@@ -82,6 +84,15 @@ export default function Dashboard(): JSX.Element {
                             )}
                         </p>
                         </div>
+                        {isAdmin && (
+                            <Link
+                                href="/settings"
+                                aria-label="Settings"
+                                className="flex h-11 w-11 items-center justify-center rounded-xl bg-gray-700/50 text-gray-300 transition-all hover:bg-gray-600/50"
+                            >
+                                <SettingsIcon />
+                            </Link>
+                        )}
                         <button
                             onClick={() => signOut()}
                             aria-label="Sign out"
@@ -92,12 +103,11 @@ export default function Dashboard(): JSX.Element {
                     </header>
 
                     {/* House-level controls. Heat vs cool is decided once for the
-                        whole house so two rooms can never fight each other;
-                        everything else now lives on the room that owns it. */}
-                    {/* relative z-30: backdrop-blur makes every panel its own
-                        stacking context, so without this the mode dropdown is
-                        painted under the room cards that follow it in the DOM. */}
-                    <div className="relative z-30 mb-3 flex items-center justify-between gap-3 rounded-2xl border border-gray-700/50 bg-gray-800/50 p-4 backdrop-blur">
+                        whole house so two rooms can never fight each other, and
+                        it is decided on the settings page: it changes twice a
+                        year, and a one-tap toggle here was one tap from turning
+                        the boiler off in January. */}
+                    <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-gray-700/50 bg-gray-800/50 p-4 backdrop-blur">
                         <div className="min-w-0">
                             <span className="text-[10px] uppercase tracking-wide text-gray-500">House</span>
                             <p className={`text-sm font-medium ${enabled ? colors.text : 'text-gray-500'}`}>
@@ -105,12 +115,6 @@ export default function Dashboard(): JSX.Element {
                             </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-3">
-                            <ModeToggle
-                                mode={mode}
-                                onChangeMode={changeMode}
-                                disabled={isSaving}
-                                hvacOn={heating || cooling}
-                            />
                             <button
                                 onClick={togglePower}
                                 disabled={isSaving}
@@ -129,6 +133,7 @@ export default function Dashboard(): JSX.Element {
                                 room={room}
                                 houseMode={mode}
                                 houseEnabled={enabled}
+                                showAirConditioners={showAirConditioners}
                                 isPending={pendingRoomIds.includes(room.id)}
                                 pendingAcIds={pendingAcIds}
                                 onUpdateRoom={updateRoomState}
@@ -138,7 +143,7 @@ export default function Dashboard(): JSX.Element {
                         ))}
                     </div>
 
-                    {unassigned.length > 0 && (
+                    {showAirConditioners && unassigned.length > 0 && (
                         <div className="mt-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4">
                             <p className="text-sm font-medium text-amber-300">
                                 {unassigned.length} {unassigned.length === 1 ? 'unit is' : 'units are'} not in a room
@@ -169,7 +174,11 @@ export default function Dashboard(): JSX.Element {
                         </div>
                     )}
 
-                    <PowerCard plugs={smartPlugs} rooms={rooms} airConditioners={airConditioners} />
+                    {/* Its own setting rather than the units': the wattage is
+                        worth watching even when the units are hidden. */}
+                    {showPowerUsage && (
+                        <PowerCard plugs={smartPlugs} rooms={rooms} airConditioners={airConditioners} />
+                    )}
 
                     <div className="mt-3 rounded-2xl border border-gray-700/50 bg-gray-800/50 p-4 backdrop-blur">
                         <span className="text-sm font-medium uppercase tracking-wide text-gray-400">Last 24 hours</span>
