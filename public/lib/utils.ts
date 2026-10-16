@@ -42,6 +42,22 @@ export const formatAge = (timestamp?: string | null): string => {
     return `${Math.round(seconds / 86400)} days ago`;
 }
 
+/**
+ * A length of time, in the largest unit that still reads naturally.
+ *
+ * For durations the API already worked out (`silent_for`), where formatAge
+ * would need a timestamp it does not have. Minutes alone turned three weeks of
+ * a unit being switched off into "32000 minutes".
+ */
+export const formatDuration = (seconds: number): string => {
+    const minutes = Math.floor(seconds / 60);
+
+    if (minutes < 60) return `${minutes} min`;
+    if (minutes < 48 * 60) return `${Math.floor(minutes / 60)} h`;
+
+    return `${Math.floor(minutes / (24 * 60))} days`;
+}
+
 /** Readings older than this are shown as stale rather than current. */
 export const STALE_AFTER_SECONDS = 600;
 

@@ -48,7 +48,6 @@ const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scrol
 
 export function useThermostat() {
     const { showNotification } = useNotification();
-    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
     // Debounce timers and coalesced payloads, keyed by "ac:3" / "room:1", so a
     // stepper held down produces one write per entity rather than one per tap.
     const timersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
@@ -61,6 +60,8 @@ export function useThermostat() {
         cooling: false,
         mode: 'heating',
         enabled: true,
+        showAirConditioners: true,
+        showPowerUsage: true,
         hvacUntil: 0,
         lastUpdated: null,
         airConditioners: [],
@@ -100,6 +101,8 @@ export function useThermostat() {
             cooling: stateData?.cooling_on ?? prev.cooling,
             mode: (stateData?.mode as Mode) ?? prev.mode,
             enabled: stateData?.enabled ?? prev.enabled,
+            showAirConditioners: stateData?.show_air_conditioners ?? prev.showAirConditioners,
+            showPowerUsage: stateData?.show_power_usage ?? prev.showPowerUsage,
             targetTemp: stateData?.target_temp ?? prev.targetTemp,
             hvacUntil: stateData?.hvac_until ?? prev.hvacUntil,
             airConditioners: stateData?.air_conditioners ?? prev.airConditioners,
@@ -251,6 +254,8 @@ export function useThermostat() {
                             cooling: r.cooling_on ?? false,
                             mode: r.mode ?? 'heating',
                             enabled: r.enabled ?? true,
+                            showAirConditioners: r.show_air_conditioners ?? true,
+                            showPowerUsage: r.show_power_usage ?? true,
                             targetTemp: r.set_temp,
                             hvacUntil: r.hvac_until ?? 0,
                             airConditioners: r.air_conditioners ?? [],
@@ -386,63 +391,16 @@ export function useThermostat() {
         }
     }, [fetchClient, showNotification, refreshData]);
 
-    const saveState = async (val: number, until: number) => {
-        if (val < 10 || until < 0) return;
-        const mode = data.mode;
-        const enabled = data.enabled;
-        setIsSaving(true);
-        try {
-            setData(prev => ({ ...prev, targetTemp: val, hvacUntil: until }));
-
-            if (timeoutRef?.current) {
-                clearTimeout(timeoutRef.current);
-                timeoutRef.current = null;
-            }
-
-            timeoutRef.current = setTimeout(async () => {
-                try {
-                    await updateState({ target_temp: val, hvac_until: until, mode, enabled });
-                } catch (error) {
-                    console.error(error);
-                } finally {
-                    timeoutRef.current = null;
-                }
-            }, 300);
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const changeMode = async (newMode: Mode) => {
-
-        if (timeoutRef?.current) {
-            clearTimeout(timeoutRef.current);
-            timeoutRef.current = null;
-        }
-
-        setIsSaving(true);
-        try {
-            await updateState({ target_temp: data.targetTemp, hvac_until: data.hvacUntil, mode: newMode, enabled: data.enabled });
-            setData(prev => ({
-                ...prev,
-                mode: newMode,
-                heating: newMode === 'heating' ? prev.heating : false,
-                cooling: newMode === 'cooling' ? prev.cooling : false,
-            }));
-        } catch (error) {
-            console.error('Failed to toggle mode', error);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
     const togglePower = async () => {
         const newEnabled = !data.enabled;
         setIsSaving(true);
         try {
-            await updateState({ target_temp: data.targetTemp, hvac_until: data.hvacUntil, mode: data.mode, enabled: newEnabled });
+            // Only the switch. This used to resend the house's target, boost
+            // and mode as this tab last saw them, and the API mirrors target
+            // and boost onto the bedroom -- so switching the house off put the
+            // bedroom back to an old setpoint, ended its boost, and could undo
+            // a season change made from another phone.
+            await updateState({ enabled: newEnabled });
             setData(prev => ({
                 ...prev,
                 enabled: newEnabled,
@@ -451,6 +409,7 @@ export function useThermostat() {
             }));
         } catch (error) {
             console.error('Failed to toggle power', error);
+            showNotification(newEnabled ? 'Could not switch the house on' : 'Could not switch the house off', 'error');
         } finally {
             setIsSaving(false);
         }
@@ -462,9 +421,7 @@ export function useThermostat() {
         isSaving,
         pendingAcIds,
         pendingRoomIds,
-        saveState,
         refreshData,
-        changeMode,
         togglePower,
         idle,
         resume: () => {

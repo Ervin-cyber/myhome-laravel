@@ -13,8 +13,15 @@ class User extends Authenticatable
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
 
+    public const ROLE_ADMIN = 'admin';
+    public const ROLE_MEMBER = 'member';
+    public const ROLES = [self::ROLE_ADMIN, self::ROLE_MEMBER];
+
     /**
      * The attributes that are mass assignable.
+     *
+     * Not `role`: it is set by name in the users controller, so no request that
+     * happens to carry the key can promote anybody.
      *
      * @var list<string>
      */
@@ -45,5 +52,10 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->role === self::ROLE_ADMIN;
     }
 }

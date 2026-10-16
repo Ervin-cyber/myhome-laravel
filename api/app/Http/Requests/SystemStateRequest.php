@@ -28,7 +28,9 @@ class SystemStateRequest extends FormRequest
             'heating_on' => 'nullable|integer',
             'mode' => 'nullable|in:heating,cooling',
             'cooling_on' => 'nullable|integer',
-            'enabled' => 'nullable|boolean'
+            'enabled' => 'nullable|boolean',
+            'show_air_conditioners' => 'nullable|boolean',
+            'show_power_usage' => 'nullable|boolean',
         ];
     }
 }

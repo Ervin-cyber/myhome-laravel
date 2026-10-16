@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // Routes that require authentication
-const protectedRoutes = ['/', '/dashboard'];
+const protectedRoutes = ['/', '/dashboard', '/settings'];
 
 // Routes that should be accessible without authentication
 const publicRoutes = ['/login'];
@@ -11,7 +11,7 @@ const publicRoutes = ['/login'];
 const apiRoutes = ['/api/login', '/proxy/api/me', '/proxy/api/logout', '/proxy/api/temperature-latest', '/proxy/api/state', '/proxy/api/stats']
 
 // Api routes that carry sub-paths, e.g. /proxy/api/air-conditioners/3
-const apiRoutePrefixes = ['/proxy/api/air-conditioners', '/proxy/api/rooms']
+const apiRoutePrefixes = ['/proxy/api/air-conditioners', '/proxy/api/rooms', '/proxy/api/admin']
 
 const isApiRoute = (path: string) =>
   apiRoutes.includes(path) ||
@@ -53,7 +53,9 @@ export async function proxy(req: NextRequest) {
 
   if (isApiRoute(path)) {
     const realPath = path.replace('/proxy', '');
-    if (req?.method == 'POST') {
+    // Anything but GET carries its method through. This used to be POST-or-GET,
+    // which quietly turned a DELETE into a GET of the same path.
+    if (req?.method !== 'GET' && req?.method !== 'HEAD') {
       // Read the body rather than parse it. Not every POST carries one —
       // /rooms/live is a bare signal — and req.json() throws on an empty body,
       // which lands here as a 500 rather than as the request going through.
@@ -61,7 +63,7 @@ export async function proxy(req: NextRequest) {
 
       const result = await fetch(`${process.env.API_BASE_URL}${realPath}`, {
         credentials: 'include',
-        method: 'POST',
+        method: req.method,
         headers: {
           'Referer': `${process.env.API_BASE_URL}`,
           Authorization: `Bearer ${accessToken}`,

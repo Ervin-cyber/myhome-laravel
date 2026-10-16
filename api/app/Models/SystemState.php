@@ -14,7 +14,7 @@ class SystemState extends Model
 
     protected $keyType = 'integer';
 
-    protected $fillable = ['target_temp', 'hvac_until', 'heating_on', 'mode', 'cooling_on', 'enabled'];
+    protected $fillable = ['target_temp', 'hvac_until', 'heating_on', 'mode', 'cooling_on', 'enabled', 'show_air_conditioners', 'show_power_usage'];
 
     public $timestamps = false;
 
@@ -22,6 +22,8 @@ class SystemState extends Model
         'heating_on' => 'boolean',
         'cooling_on' => 'boolean',
         'enabled' => 'boolean',
+        'show_air_conditioners' => 'boolean',
+        'show_power_usage' => 'boolean',
     ];
 
     protected static function booted()

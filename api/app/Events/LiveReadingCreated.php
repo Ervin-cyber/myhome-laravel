@@ -37,6 +37,8 @@ class LiveReadingCreated implements ShouldBroadcastNow
             'heating_on' => boolval($systemState?->heating_on),
             'cooling_on' => boolval($systemState?->cooling_on),
             'mode' => $systemState?->mode,
+            'show_air_conditioners' => $systemState?->show_air_conditioners ?? true,
+            'show_power_usage' => $systemState?->show_power_usage ?? true,
             'set_temp' => $systemState?->target_temp,
             'hvac_until' => $systemState?->hvac_until,
             'rooms' => Room::with('airConditioners')->orderBy('sort_order')->get(),
