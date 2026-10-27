@@ -8,6 +8,7 @@ use App\Models\Room;
 use App\Models\RoomTemperatureSample;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Throwable;
 
 /**
  * Turns "is it running right now" observations into runs.
@@ -38,7 +39,7 @@ class RunRecorder
      */
     private function observe(string $source, ?int $acId, ?int $roomId, bool $running, ?string $mode): void
     {
-        DB::transaction(function () use ($source, $acId, $roomId, $running, $mode) {
+        $this->quietly(fn () => DB::transaction(function () use ($source, $acId, $roomId, $running, $mode) {
             $now = now();
             $gap = config('climate.run_gap_seconds');
 
@@ -71,7 +72,25 @@ class RunRecorder
                     'confirmed_at' => $now,
                 ]);
             }
-        });
+        }));
+    }
+
+    /**
+     * Run a bookkeeping step without letting it fail the request it rides on.
+     *
+     * Every caller is on the control path: the Pi's unit sync, and /params,
+     * its fallback for fetching what to do. A stats table that is missing --
+     * the window between a deploy and the hand-run migration on the Pi -- or
+     * locked must cost a data point, never the house's control. Reported, so
+     * it is not silent either.
+     */
+    private function quietly(callable $step): void
+    {
+        try {
+            $step();
+        } catch (Throwable $e) {
+            report($e);
+        }
     }
 
     /**
@@ -79,6 +98,11 @@ class RunRecorder
      * most once per room_sample_seconds however often the units are read.
      */
     public function sampleRoom(Room $room): void
+    {
+        $this->quietly(fn () => $this->takeSample($room));
+    }
+
+    private function takeSample(Room $room): void
     {
         $interval = config('climate.room_sample_seconds');
 

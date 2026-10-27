@@ -250,6 +250,15 @@ class RoomStatsTest extends TestCase
         $this->postJson("/api/rooms/{$this->room('living')->id}", ['target_temp' => 22])->assertOk();
     }
 
+    public function test_the_pi_keeps_control_when_runs_cannot_be_recorded(): void
+    {
+        // The window between a deploy and the hand-run migration on the Pi.
+        SystemState::firstOrCreate()->update(['mode' => 'heating', 'heating_on' => true, 'enabled' => true]);
+        \Illuminate\Support\Facades\Schema::drop('climate_runs');
+
+        $this->getJson('/api/params')->assertOk()->assertJsonStructure(['control']);
+    }
+
     public function test_an_unknown_range_is_rejected(): void
     {
         $this->getJson('/api/stats?range=1y')->assertUnprocessable();
