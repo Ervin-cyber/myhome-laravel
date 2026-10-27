@@ -29,6 +29,7 @@ class Room extends Model
         'heating_on',
         'cooling_on',
         'show_stats',
+        'show_on_dashboard',
     ];
 
     protected $casts = [
@@ -42,6 +43,7 @@ class Room extends Model
         'heating_on' => 'boolean',
         'cooling_on' => 'boolean',
         'show_stats' => 'boolean',
+        'show_on_dashboard' => 'boolean',
     ];
 
     protected $appends = ['is_boosting'];

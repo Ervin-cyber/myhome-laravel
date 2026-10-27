@@ -124,11 +124,12 @@ class RoomController extends Controller
             'calibration_offset' => 'sometimes|numeric|between:-10,10',
             // Null hands the room back to the house heat/cool decision.
             'mode_override' => ['sometimes', 'nullable', Rule::in(Room::MODE_OVERRIDES)],
-            // A settings-page choice, like the house display switches.
+            // Settings-page choices, like the house display switches.
             'show_stats' => 'sometimes|boolean',
+            'show_on_dashboard' => 'sometimes|boolean',
         ]);
 
-        if (array_key_exists('show_stats', $data)) {
+        if (array_intersect_key($data, array_flip(['show_stats', 'show_on_dashboard']))) {
             Gate::authorize('admin');
         }
 
@@ -137,6 +138,16 @@ class RoomController extends Controller
         }
 
         $room->fill($data);
+
+        // Hiding a room switches it off, once. A room running where nobody can
+        // see it is a trap. Not linked the other way: showing it again leaves
+        // it off, since a room starting up because it became visible would be
+        // a surprise of its own. The same two writes as the power button's
+        // off, and the units come off the handset below for the same reason.
+        if ($room->isDirty('show_on_dashboard') && ! $room->show_on_dashboard) {
+            $room->enabled = false;
+            $room->hvac_until = 0;
+        }
 
         if (! $room->isDirty()) {
             return response()->json($room->fresh('airConditioners'));

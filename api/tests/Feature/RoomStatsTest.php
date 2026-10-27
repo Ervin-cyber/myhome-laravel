@@ -242,10 +242,41 @@ class RoomStatsTest extends TestCase
         $this->assertContains($this->room('bedroom')->id, $ids);
     }
 
+    public function test_hiding_a_room_switches_it_off_once(): void
+    {
+        $admin = User::factory()->create();
+        $admin->role = User::ROLE_ADMIN;
+        $admin->save();
+        Sanctum::actingAs($admin);
+
+        $living = $this->room('living');
+        $living->update(['enabled' => true, 'hvac_until' => time() + 1800]);
+        $ac = $this->unit('aa0000000008', 'living');
+        $ac->update(['manual_power' => true, 'manual_since' => now()]);
+
+        $this->postJson("/api/rooms/{$living->id}", ['show_on_dashboard' => false])
+            ->assertOk()
+            ->assertJsonPath('show_on_dashboard', false);
+
+        $living->refresh();
+        $this->assertFalse($living->enabled, 'A hidden room is not left running.');
+        $this->assertFalse($living->is_boosting, 'Its boost goes with it.');
+        $this->assertNull($ac->fresh()->manual_power, 'Off means off at the handset too.');
+
+        // Still recorded and listed in the stats, which have their own switch.
+        $this->assertContains($living->id, collect($this->getJson('/api/stats')->json('rooms'))->pluck('id'));
+
+        // Showing it again does not start it.
+        $this->postJson("/api/rooms/{$living->id}", ['show_on_dashboard' => true])->assertOk();
+        $this->assertFalse($living->fresh()->enabled);
+    }
+
     public function test_a_member_cannot_change_which_rooms_show_stats(): void
     {
         $this->postJson("/api/rooms/{$this->room('living')->id}", ['show_stats' => false])->assertForbidden();
+        $this->postJson("/api/rooms/{$this->room('living')->id}", ['show_on_dashboard' => false])->assertForbidden();
         $this->assertTrue($this->room('living')->show_stats);
+        $this->assertTrue($this->room('living')->show_on_dashboard);
 
         // The same endpoint still takes a member's everyday changes.
         $this->postJson("/api/rooms/{$this->room('living')->id}", ['target_temp' => 22])->assertOk();
