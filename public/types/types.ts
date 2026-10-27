@@ -140,6 +140,8 @@ export interface Room {
     cooling_on: boolean;
     /** Whether the stats section lists this room. Set on the settings page. */
     show_stats: boolean;
+    /** Hiding switches the room off once; showing it again leaves it off. */
+    show_on_dashboard: boolean;
     air_conditioners?: AirConditioner[];
 }
 

@@ -42,6 +42,9 @@ export default function Dashboard(): JSX.Element {
     // config/climate.php, so this is a setup prompt rather than a normal state.
     const unassigned = airConditioners.filter((ac) => ac.room_id === null);
 
+    // `!== false` so a room from an API that predates the column still shows.
+    const shownRooms = rooms.filter((room) => room.show_on_dashboard !== false);
+
     if (!lastUpdated) {
         return (
             // Same box as the loaded dashboard, so nothing shifts when the
@@ -125,8 +128,16 @@ export default function Dashboard(): JSX.Element {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                        {rooms.map((room) => (
+                    {shownRooms.length === 0 && (
+                        <p className="rounded-2xl border border-gray-700/50 bg-gray-800/50 p-4 text-sm text-gray-400">
+                            All rooms are hidden, and each was switched off when it was hidden{isAdmin ? '. Choose which to show in Settings.' : '.'}
+                        </p>
+                    )}
+
+                    {/* Two columns only when there are two things to put in
+                        them; a lone room would otherwise sit at half width. */}
+                    <div className={`grid grid-cols-1 gap-3 ${shownRooms.length > 1 ? 'lg:grid-cols-2' : ''}`}>
+                        {shownRooms.map((room) => (
                             <RoomCard
                                 key={room.id}
                                 room={room}

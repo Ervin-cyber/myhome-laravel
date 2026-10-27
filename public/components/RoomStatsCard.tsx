@@ -1,6 +1,6 @@
 "use client";
 
-import { JSX } from 'react';
+import { Fragment, JSX } from 'react';
 import { useRoomStats } from '@/hooks/useRoomStats';
 import { formatDate, formatRuntime } from '@/lib/utils';
 import { RoomStats, RunSource, StatsRange } from '@/types/types';
@@ -35,11 +35,17 @@ function SourceRow({ source }: { source: RunSource }): JSX.Element {
     );
 }
 
-function RoomBlock({ room, showAirConditioners }: { room: RoomStats; showAirConditioners: boolean }): JSX.Element {
-    // Only what did something in the range. A boiler at 0m all summer, or a
-    // unit at 0m all winter, is a row that says nothing.
-    const sources = room.sources.filter((s) =>
+/**
+ * Only what did something in the range. A boiler at 0m all summer, or a unit
+ * at 0m all winter, is a row that says nothing.
+ */
+function visibleSources(room: RoomStats, showAirConditioners: boolean): RunSource[] {
+    return room.sources.filter((s) =>
         (s.kind === 'boiler' || showAirConditioners) && (s.seconds > 0 || s.cycles > 0 || s.running));
+}
+
+function RoomBlock({ room, showAirConditioners }: { room: RoomStats; showAirConditioners: boolean }): JSX.Element {
+    const sources = visibleSources(room, showAirConditioners);
 
     const units = sources.filter((s) => s.kind === 'ac');
     const unitTotal = units.reduce((sum, s) => sum + s.seconds, 0);
@@ -86,6 +92,48 @@ function RoomBlock({ room, showAirConditioners }: { room: RoomStats; showAirCond
     );
 }
 
+function Tile({ label, value, tone }: { label: string; value: string | number; tone: string }): JSX.Element {
+    return (
+        <div className="min-w-0">
+            <p className="truncate text-[10px] uppercase tracking-wide text-gray-500">{label}</p>
+            <p className={`font-mono text-xl ${tone}`}>{value}</p>
+        </div>
+    );
+}
+
+/**
+ * One room on its own: the full-width tile row the stats used to be, before
+ * there were rooms to split them by. Temperatures first, then each source's
+ * runtime and starts, labelled by what ran when there is more than one.
+ */
+function WideRoom({ room, showAirConditioners }: { room: RoomStats; showAirConditioners: boolean }): JSX.Element {
+    const sources = visibleSources(room, showAirConditioners);
+    const named = sources.length > 1;
+    const units = sources.filter((s) => s.kind === 'ac');
+
+    return (
+        <div className="mt-3">
+            <p className="text-sm font-medium text-white">{room.name}</p>
+            <div className="mt-2 grid grid-cols-3 gap-4 md:grid-cols-5">
+                <Tile label="Avg" value={room.temperature ? `${room.temperature.avg.toFixed(1)}°C` : '--'} tone="text-blue-400" />
+                <Tile label="Max" value={room.temperature ? `${room.temperature.max.toFixed(1)}°C` : '--'} tone="text-red-400" />
+                <Tile label="Min" value={room.temperature ? `${room.temperature.min.toFixed(1)}°C` : '--'} tone="text-cyan-400" />
+                {sources.map((s) => (
+                    <Fragment key={`${s.kind}:${s.air_conditioner_id ?? 'boiler'}`}>
+                        <Tile label={named ? `${s.name} runtime` : 'Runtime'} value={formatRuntime(s.seconds)} tone="text-orange-400" />
+                        <Tile label={named ? `${s.name} starts` : 'Starts'} value={s.cycles} tone="text-orange-400" />
+                    </Fragment>
+                ))}
+                {/* The same sum the narrow layout shows: unit-hours. */}
+                {units.length > 1 && (
+                    <Tile label="Units together" value={formatRuntime(units.reduce((sum, s) => sum + s.seconds, 0))} tone="text-orange-300" />
+                )}
+                {sources.length === 0 && <Tile label="Runtime" value="0m" tone="text-gray-500" />}
+            </div>
+        </div>
+    );
+}
+
 export default function RoomStatsCard({ showAirConditioners }: Props): JSX.Element {
     const { range, setRange, stats, failed } = useRoomStats();
 
@@ -125,11 +173,15 @@ export default function RoomStatsCard({ showAirConditioners }: Props): JSX.Eleme
                             {since ? `Run times counted since ${formatDate(since)}.` : 'Run times start counting from the next run.'}
                         </p>
                     )}
-                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-                        {stats.rooms.map((room) => (
-                            <RoomBlock key={room.id} room={room} showAirConditioners={showAirConditioners} />
-                        ))}
-                    </div>
+                    {stats.rooms.length === 1 ? (
+                        <WideRoom room={stats.rooms[0]} showAirConditioners={showAirConditioners} />
+                    ) : (
+                        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                            {stats.rooms.map((room) => (
+                                <RoomBlock key={room.id} room={room} showAirConditioners={showAirConditioners} />
+                            ))}
+                        </div>
+                    )}
                 </>
             )}
         </section>
