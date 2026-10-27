@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
 
 export async function signIn(email: string, password: string) {
     return await fetch(`${process.env.API_BASE_URL}/api/login`, {
@@ -18,13 +19,7 @@ export async function signIn(email: string, password: string) {
         if (data?.access_token) {
             const cookieStore = await cookies()
             
-            cookieStore.set('access_token', data.access_token, {
-                httpOnly: true,
-                secure: false,//process.env.NODE_ENV === 'production',
-                sameSite: 'lax',
-                maxAge: 60 * 60 * 24 * 14, // 2 week
-                path: '/',
-            })
+            cookieStore.set(SESSION_COOKIE, data.access_token, sessionCookieOptions)
             redirect('/dashboard');
         } else {
             throw data?.message ?? JSON.stringify(data);
@@ -34,7 +29,7 @@ export async function signIn(email: string, password: string) {
 
 export async function signOut() {
     const cookieStore = await cookies();
-    const token = cookieStore.get('access_token')?.value;
+    const token = cookieStore.get(SESSION_COOKIE)?.value;
     await fetch(`${process.env.API_BASE_URL}/api/logout`, {
         method: 'POST',
         headers: {
@@ -43,6 +38,6 @@ export async function signOut() {
             Accept: 'application/json'
         },
     });
-    cookieStore.delete('access_token');
+    cookieStore.delete(SESSION_COOKIE);
     redirect('/login');
 }
