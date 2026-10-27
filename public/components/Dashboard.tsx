@@ -1,6 +1,6 @@
 "use client";
 
-import { formatAge, getHoursFromSeconds, getMinutesFromSeconds } from '@/lib/utils';
+import { formatAge } from '@/lib/utils';
 import { getThemeColors } from '@/lib/themeColors';
 import LogoutIcon from '@mui/icons-material/Logout';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
@@ -12,16 +12,15 @@ import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useThermostat } from '../hooks/useThermostat';
 import HeatingBorder from './HeatingBorder';
 import HeatingIcon from './HeatingOnIcon';
-import StatCard from './StatCard';
 import LoadingSpinner from './LoadingSpinner';
 import ACUnitIcon from './ACUnitIcon';
 import RoomCard from './RoomCard';
 import PowerCard from './PowerCard';
+import RoomStatsCard from './RoomStatsCard';
 
 export default function Dashboard(): JSX.Element {
     const {
         data,
-        stats,
         isSaving,
         pendingAcIds,
         pendingRoomIds,
@@ -180,20 +179,7 @@ export default function Dashboard(): JSX.Element {
                         <PowerCard plugs={smartPlugs} rooms={rooms} airConditioners={airConditioners} />
                     )}
 
-                    <div className="mt-3 rounded-2xl border border-gray-700/50 bg-gray-800/50 p-4 backdrop-blur">
-                        <span className="text-sm font-medium uppercase tracking-wide text-gray-400">Last 24 hours</span>
-                        <div className="mt-2 grid grid-cols-3 gap-4 md:grid-cols-5">
-                            <StatCard label="Avg" value={`${Number(stats?.temp_avg).toFixed(1)}°C`} colorClass="text-blue-400" />
-                            <StatCard label="Max" value={`${Number(stats?.temp_max).toFixed(1)}°C`} colorClass="text-red-400" />
-                            <StatCard label="Min" value={`${Number(stats?.temp_min).toFixed(1)}°C`} colorClass="text-cyan-400" />
-                            <StatCard
-                                label="Runtime"
-                                value={`${getHoursFromSeconds(stats?.run_time ?? 0)}h ${getMinutesFromSeconds(stats?.run_time ?? 0)}m`}
-                                colorClass="text-orange-400"
-                            />
-                            <StatCard label="Cycles" value={stats?.count_on ?? 0} colorClass="text-orange-400" />
-                        </div>
-                    </div>
+                    <RoomStatsCard showAirConditioners={showAirConditioners} />
                 </div>
             </HeatingBorder>
         </div>

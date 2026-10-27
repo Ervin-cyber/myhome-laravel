@@ -138,6 +138,8 @@ export interface Room {
     current_temp_at: string | null;
     heating_on: boolean;
     cooling_on: boolean;
+    /** Whether the stats section lists this room. Set on the settings page. */
+    show_stats: boolean;
     air_conditioners?: AirConditioner[];
 }
 
@@ -249,12 +251,35 @@ export interface ThermostatData {
     smartPlugs: SmartPlug[];
 }
 
-export interface Stat {
-    temp_min: number;
-    temp_max: number;
-    temp_avg: number;
-    run_time: number;
-    count_on: number;
+export type StatsRange = '24h' | '7d';
+
+/** One thing that heats or cools a room, over the chosen range. */
+export interface RunSource {
+    kind: 'boiler' | 'ac';
+    air_conditioner_id: number | null;
+    name: string;
+    /** The boiler: one relay heats every radiator room, so each shows it whole. */
+    shared: boolean;
+    seconds: number;
+    cycles: number;
+    running: boolean;
+}
+
+export interface RoomStats {
+    id: number;
+    name: string;
+    /** Null when the room has no history in the range. */
+    temperature: { min: number; max: number; avg: number } | null;
+    sources: RunSource[];
+}
+
+export interface StatsResponse {
+    range: StatsRange;
+    /** When run recording began. Earlier than that there is nothing to count. */
+    recording_since: string | null;
+    /** True until recording covers the whole range. */
+    partial: boolean;
+    rooms: RoomStats[];
 }
 
 export interface TemperatureResponse {

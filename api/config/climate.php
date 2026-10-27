@@ -123,4 +123,24 @@ return [
         ? null
         : max(1, (int) (env('CLIMATE_DASHBOARD_IDLE_MINUTES') ?: 3)),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Run history
+    |--------------------------------------------------------------------------
+    |
+    | run_gap_seconds: how long a run may go unconfirmed and still be the same
+    | run. The Pi reads each unit and polls for the boiler about once a minute,
+    | so five minutes of silence means we no longer know, and the run is closed
+    | at the last moment it was seen rather than counted on into the dark.
+    |
+    | room_sample_seconds: how often a room that reads its temperature off its
+    | unit gets a history point. Matched to the ESPs' five-minute cadence, so
+    | the two kinds of room have comparable min/max/avg.
+    |
+    */
+
+    'run_gap_seconds' => max(60, (int) env('CLIMATE_RUN_GAP_SECONDS', 300)),
+
+    'room_sample_seconds' => max(60, (int) env('CLIMATE_ROOM_SAMPLE_SECONDS', 300)),
+
 ];
