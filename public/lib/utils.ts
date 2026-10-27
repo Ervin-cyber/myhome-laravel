@@ -58,6 +58,14 @@ export const formatDuration = (seconds: number): string => {
     return `${Math.floor(minutes / (24 * 60))} days`;
 }
 
+/** A runtime total: "4h 05m", or "35m" under an hour. */
+export const formatRuntime = (seconds: number): string => {
+    const h = getHoursFromSeconds(seconds);
+    const m = getMinutesFromSeconds(seconds);
+
+    return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+}
+
 /** Readings older than this are shown as stale rather than current. */
 export const STALE_AFTER_SECONDS = 600;
 

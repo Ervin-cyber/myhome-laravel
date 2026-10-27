@@ -5,11 +5,12 @@ namespace App\Http\Controllers;
 use App\Models\SystemState;
 use App\Models\TemperatureReading;
 use App\Services\ClimateService;
+use App\Services\RunRecorder;
 use Illuminate\Http\Request;
 
 class PiController extends Controller
 {
-    public function __construct(private ClimateService $climate)
+    public function __construct(private ClimateService $climate, private RunRecorder $runs)
     {
     }
 
@@ -22,6 +23,13 @@ class PiController extends Controller
     {
         $latestTemp = TemperatureReading::getLatestTemperature();
         $systemState = SystemState::first();
+
+        // The Pi reports the relay only when it switches, so a long boiler run
+        // has nothing confirming it but this minute poll. A Pi that has gone
+        // away stops confirming, and the run ends where it was last seen.
+        if ($systemState) {
+            $this->runs->observeBoiler((bool) $systemState->heating_on);
+        }
 
         return [
             'control' => $this->climate->evaluate(),

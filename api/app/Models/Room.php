@@ -28,6 +28,7 @@ class Room extends Model
         'current_temp_at',
         'heating_on',
         'cooling_on',
+        'show_stats',
     ];
 
     protected $casts = [
@@ -40,6 +41,7 @@ class Room extends Model
         'current_temp_at' => 'datetime',
         'heating_on' => 'boolean',
         'cooling_on' => 'boolean',
+        'show_stats' => 'boolean',
     ];
 
     protected $appends = ['is_boosting'];

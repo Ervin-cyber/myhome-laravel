@@ -6,7 +6,7 @@ import { JSX, useCallback, useEffect, useState } from 'react';
 import { useNotification } from '@/context/NotificationContext';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { failureMessage } from '@/lib/api';
-import { Mode } from '@/types/types';
+import { Mode, Room } from '@/types/types';
 import LoadingSpinner from './LoadingSpinner';
 import UserAdmin from './UserAdmin';
 
@@ -24,6 +24,15 @@ const SEASONS: { mode: Mode; label: string; hint: string; tone: string }[] = [
         tone: 'border-blue-500/50 bg-blue-500/20 text-blue-200',
     },
 ];
+
+/** The track and knob only; the button around it carries role="switch". */
+function Switch({ on }: { on: boolean }): JSX.Element {
+    return (
+        <span className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${on ? 'bg-blue-500/70' : 'bg-gray-600'}`}>
+            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${on ? 'left-6' : 'left-1'}`} />
+        </span>
+    );
+}
 
 type DisplayKey = 'show_air_conditioners' | 'show_power_usage';
 
@@ -195,14 +204,89 @@ function Season(): JSX.Element {
                             <span className="block text-sm font-medium text-white">{label}</span>
                             <span className="block text-xs text-gray-500">{hint}</span>
                         </span>
-                        <span className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${display[key] ? 'bg-blue-500/70' : 'bg-gray-600'}`}>
-                            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${display[key] ? 'left-6' : 'left-1'}`} />
-                        </span>
+                        <Switch on={display[key]} />
                     </button>
                 ))}
             </div>
         </section>
         </>
+    );
+}
+
+/** Which rooms the dashboard's stats section lists. */
+function StatsRooms(): JSX.Element {
+    const { showNotification } = useNotification();
+    const [rooms, setRooms] = useState<Room[] | null>(null);
+    const [busyId, setBusyId] = useState<number | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        fetch('/proxy/api/rooms')
+            .then((res) => {
+                if (!res.ok) throw new Error(`rooms returned ${res.status}`);
+                return res.json();
+            })
+            .then((list: Room[]) => {
+                if (!cancelled) setRooms(list);
+            })
+            .catch((error) => {
+                console.error(error);
+                if (!cancelled) showNotification('Could not load the rooms', 'error');
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [showNotification]);
+
+    const toggle = async (room: Room) => {
+        const next = !room.show_stats;
+        setBusyId(room.id);
+        try {
+            const res = await fetch(`/proxy/api/rooms/${room.id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ show_stats: next }),
+            });
+            if (!res.ok) {
+                showNotification(await failureMessage(res, 'Could not change the setting'), 'error');
+                return;
+            }
+            setRooms((prev) => prev?.map((r) => (r.id === room.id ? { ...r, show_stats: next } : r)) ?? prev);
+        } catch (error) {
+            console.error(error);
+            showNotification('Could not change the setting', 'error');
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    return (
+        <section className="rounded-2xl border border-gray-700/50 bg-gray-800/50 p-4 backdrop-blur">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-gray-400">Stats</h2>
+            <p className="mt-1 text-xs text-gray-500">Rooms listed in the dashboard&apos;s stats. Run times are recorded for every room either way.</p>
+
+            {rooms === null ? (
+                <p className="mt-3 text-sm text-gray-500">Loading…</p>
+            ) : (
+                <div className="mt-3 flex flex-col gap-2">
+                    {rooms.map((room) => (
+                        <button
+                            key={room.id}
+                            onClick={() => toggle(room)}
+                            disabled={busyId === room.id}
+                            role="switch"
+                            aria-checked={room.show_stats}
+                            className="flex min-h-[3rem] w-full items-center justify-between gap-3 rounded-xl border border-gray-700/60 bg-gray-900/40 px-4 py-2 text-left transition-all hover:bg-gray-700/40 disabled:opacity-50"
+                        >
+                            <span className="truncate text-sm font-medium text-white">{room.name}</span>
+                            <Switch on={room.show_stats} />
+                        </button>
+                    ))}
+                </div>
+            )}
+        </section>
     );
 }
 
@@ -236,6 +320,7 @@ export default function Settings(): JSX.Element {
                 ) : (
                     <>
                         <Season />
+                        <StatsRooms />
                         <UserAdmin currentUserId={user.id} />
                     </>
                 )}

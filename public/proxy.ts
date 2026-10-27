@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { SESSION_COOKIE, sessionCookieOptions } from './lib/session';
 
 // Routes that require authentication
 const protectedRoutes = ['/', '/dashboard', '/settings'];
@@ -17,6 +18,41 @@ const isApiRoute = (path: string) =>
   apiRoutes.includes(path) ||
   apiRoutePrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 
+type TokenCheck = 'valid' | 'invalid' | 'unknown';
+
+/**
+ * Ask the API whether a token still works.
+ *
+ * Three answers, not two. Only a refusal (401/403) means the session is over.
+ * A 502 while the API container is coming up, a 504 behind a proxy that has
+ * not re-resolved it, or no answer at all, says the API is unavailable -- not
+ * that the token is bad -- and must not cost a valid session. That confusion is
+ * why every deploy used to appear to log everybody out.
+ */
+async function checkToken(token: string): Promise<TokenCheck> {
+  try {
+    const res = await fetch(`${process.env.API_BASE_URL}/api/me`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json'
+      },
+    });
+
+    if (res.status === 401 || res.status === 403) return 'invalid';
+
+    return res.ok ? 'valid' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** Start the session's lifetime over, on a response that has proved the token. */
+function renew(response: NextResponse, token: string): NextResponse {
+  response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions);
+
+  return response;
+}
+
 export async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
@@ -25,8 +61,20 @@ export async function proxy(req: NextRequest) {
   }
   const url = req.nextUrl.clone();
 
-  // Skip public routes
   if (publicRoutes.some((path) => req.nextUrl.pathname.startsWith(path))) {
+    const token = req.cookies.get(SESSION_COOKIE)?.value;
+
+    // Somebody still signed in who lands on the login page -- sent there by a
+    // 401 during a blip, or by an old bookmark -- goes back to the dashboard
+    // instead of being asked for a password they do not need. Only on a
+    // confirmed token: with the API down, showing the form is the safe answer,
+    // and redirecting would loop between here and a dashboard that cannot load.
+    if (token && path.startsWith('/login') && await checkToken(token) === 'valid') {
+      url.pathname = '/dashboard';
+
+      return renew(NextResponse.redirect(url), token);
+    }
+
     return NextResponse.next();
   }
 
@@ -35,7 +83,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const accessToken = req.cookies.get('access_token')?.value;
+  const accessToken = req.cookies.get(SESSION_COOKIE)?.value;
 
   // No access token and not api request → redirect to login
   if (!accessToken && !path.startsWith('/proxy/api')) {
@@ -52,7 +100,9 @@ export async function proxy(req: NextRequest) {
   }
 
   if (isApiRoute(path)) {
-    const realPath = path.replace('/proxy', '');
+    // With the query string: pathname alone dropped it, so ?range=7d reached
+    // the API as a bare /stats and quietly answered for the default.
+    const realPath = path.replace('/proxy', '') + req.nextUrl.search;
     // Anything but GET carries its method through. This used to be POST-or-GET,
     // which quietly turned a DELETE into a GET of the same path.
     if (req?.method !== 'GET' && req?.method !== 'HEAD') {
@@ -88,44 +138,29 @@ export async function proxy(req: NextRequest) {
     }
   }
 
-  // Validate access token with Laravel /me endpoint
-  try {
-    const meRes = await fetch(`${process.env.API_BASE_URL}/api/me`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json'
-      },
-    });
+  const check = await checkToken(accessToken);
 
-    // Only a refusal means the session is over. Anything else — 502 while the
-    // API container is still coming up, 504 behind a proxy that has not
-    // re-resolved it yet — says the API is unavailable, which is not the same
-    // as the token being bad and must not cost a valid two-week session. This
-    // is why every deploy appeared to log you out: for the few seconds Laravel
-    // was down, every page load was read as a rejected token.
-    if (meRes.status === 401 || meRes.status === 403) {
-      url.pathname = '/login';
-      const response = NextResponse.redirect(url);
-      response.cookies.delete('access_token');
-      return response;
-    }
+  if (check === 'invalid') {
+    url.pathname = '/login';
+    const response = NextResponse.redirect(url);
+    response.cookies.delete(SESSION_COOKIE);
+    return response;
+  }
 
-    if (!meRes.ok) {
-      // Render the page and let it retry. Its own polling recovers on its own
-      // once the API answers again, with the session still in hand.
-      return NextResponse.next();
-    }
-
-    if (path == "" || path == "/") {
-      url.pathname = '/dashboard';
-      return NextResponse.redirect(url);
-    }
-  } catch {
-    // Could not reach the API at all. Same reasoning: unreachable is not
-    // unauthenticated, and bouncing to login would throw the session away over
-    // a container that is thirty seconds from being back.
+  if (check === 'unknown') {
+    // Render the page and let it retry. Its own polling recovers once the API
+    // answers again, with the session still in hand.
     return NextResponse.next();
   }
 
-  return NextResponse.next();
+  // The API has just vouched for the token, so the session starts its
+  // lifetime over. Only on a page load: an API call carries no such proof, and
+  // renewing during an outage would keep a cookie alive for a token nobody has
+  // checked.
+  if (path == "" || path == "/") {
+    url.pathname = '/dashboard';
+    return renew(NextResponse.redirect(url), accessToken);
+  }
+
+  return renew(NextResponse.next(), accessToken);
 }

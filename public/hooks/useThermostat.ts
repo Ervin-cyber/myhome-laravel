@@ -1,5 +1,5 @@
 import { createEcho } from '@/lib/echo';
-import { AirConditioner, FetchLatestDataResponse, LiveReadingEvent, Mode, Room, Stat, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
+import { AirConditioner, FetchLatestDataResponse, LiveReadingEvent, Mode, Room, SystemStateResponse, TemperatureResponse, ThermostatData } from '@/types/types';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRefetchOnFocus } from './useRefetchOnFocus';
 import { useNotification } from '@/context/NotificationContext';
@@ -68,7 +68,6 @@ export function useThermostat() {
         rooms: [],
         smartPlugs: [],
     });
-    const [stats, setStats] = useState<Stat | undefined>();
     const [isSaving, setIsSaving] = useState(false);
     // Per-entity, so adjusting one card does not freeze the controls of the others.
     const [pendingAcIds, setPendingAcIds] = useState<number[]>([]);
@@ -129,12 +128,6 @@ export function useThermostat() {
         return response;
     }, [showNotification]);
 
-    const fetchStats = useCallback(async (): Promise<Stat> => {
-        const res = await fetchClient('/proxy/api/stats');
-        if (!res.ok) throw new Error('Failed to fetch stats');
-        return res.json();
-    }, [fetchClient]);
-
     const fetchLatestData = useCallback(async (): Promise<FetchLatestDataResponse> => {
         const [tempResult, stateResult] = await Promise.all([
             fetchClient('/proxy/api/temperature-latest'),
@@ -148,10 +141,10 @@ export function useThermostat() {
     }, [fetchClient]);
 
     const refreshData = useCallback(async () => {
+        // Stats live in useRoomStats now. They used to be fetched first here,
+        // so a failing /stats threw before the room state was ever asked for
+        // and froze the whole dashboard on its last reading.
         try {
-            const newStats = await fetchStats();
-            setStats(newStats);
-
             const { temp, state } = await fetchLatestData();
              if (temp && state) {
                 processUpdate(temp, state);
@@ -159,7 +152,7 @@ export function useThermostat() {
         } catch (error) {
             console.error("Failed to refresh data", error);
         }
-    }, [fetchStats, fetchLatestData, processUpdate]);
+    }, [fetchLatestData, processUpdate]);
 
     /**
      * Ask the Pi to interrogate the units directly for the next few minutes.
@@ -276,7 +269,7 @@ export function useThermostat() {
             timers.forEach(clearTimeout);
             timers.clear();
         };
-    }, [refreshData, fetchStats, requestLiveData]);
+    }, [refreshData, requestLiveData]);
 
     const updateState = useCallback(async (body: Record<string, unknown>) => {
         const res = await fetchClient('/proxy/api/state', {
@@ -417,7 +410,6 @@ export function useThermostat() {
 
     return {
         data,
-        stats,
         isSaving,
         pendingAcIds,
         pendingRoomIds,

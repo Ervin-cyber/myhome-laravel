@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\SystemStateRequest;
 use App\Models\AirConditioner;
-use App\Models\HeatingLog;
 use App\Models\Room;
 use App\Models\SmartPlug;
 use App\Models\SystemState;
@@ -50,8 +49,6 @@ class SystemStateController extends Controller
         if ($state->wasRecentlyCreated) {
             $state->refresh();
         }
-
-        $oldState = $state->replicate();
 
         // Only a change is guarded, not the key: a member switching the house
         // on or off may still send the mode it already has.
@@ -129,22 +126,9 @@ class SystemStateController extends Controller
             $state->cooling_on = false;
         }
 
-        // Log state changes
-        if ($oldState->heating_on != $state->heating_on || 
-            $oldState->cooling_on != $state->cooling_on) {
-            
-            $fromState = $oldState->heating_on ? 'heating_on' : 
-                        ($oldState->cooling_on ? 'cooling_on' : 'off');
-            $toState = $state->heating_on ? 'heating_on' : 
-                      ($state->cooling_on ? 'cooling_on' : 'off');
-            
-            HeatingLog::create([
-                'from_state' => $fromState,
-                'to_state' => $toState,
-                'run_time' => $state->hvac_until ?? 0,
-            ]);
-        }
-
+        // Boiler runs are recorded by SystemStateObserver off the heating_on
+        // edge. This used to write heating_logs, with words in integer columns
+        // and a boost's end time as its "run time", which no query could use.
         $state->save();
 
         $this->mirrorToBoilerRoom($data, $state);

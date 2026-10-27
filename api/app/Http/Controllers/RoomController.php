@@ -7,6 +7,7 @@ use App\Models\Room;
 use App\Models\SystemState;
 use App\Services\ClimateService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 
 class RoomController extends Controller
@@ -123,7 +124,13 @@ class RoomController extends Controller
             'calibration_offset' => 'sometimes|numeric|between:-10,10',
             // Null hands the room back to the house heat/cool decision.
             'mode_override' => ['sometimes', 'nullable', Rule::in(Room::MODE_OVERRIDES)],
+            // A settings-page choice, like the house display switches.
+            'show_stats' => 'sometimes|boolean',
         ]);
+
+        if (array_key_exists('show_stats', $data)) {
+            Gate::authorize('admin');
+        }
 
         if (array_key_exists('hvac_until', $data)) {
             $data['hvac_until'] = $this->resolveBoost($data['hvac_until']);

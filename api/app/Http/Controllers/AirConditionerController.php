@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Concerns\PlacesByMac;
 use App\Models\AirConditioner;
 use App\Models\Room;
+use App\Services\RunRecorder;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use App\Events\LiveReadingCreated;
@@ -12,6 +13,10 @@ use App\Events\LiveReadingCreated;
 class AirConditionerController extends Controller
 {
     use PlacesByMac;
+
+    public function __construct(private RunRecorder $runs)
+    {
+    }
 
     public function index()
     {
@@ -122,6 +127,17 @@ class AirConditionerController extends Controller
             $ac->last_seen_at = now();
             $ac->save();
 
+            // Only from the unit's own answer. A discovery sync carries no
+            // state, and treating its silence as "off" would end every run at
+            // each scan.
+            if (isset($device['reported_state']['power'])) {
+                $this->runs->observeUnit(
+                    $ac,
+                    (bool) $device['reported_state']['power'],
+                    $device['reported_state']['mode'] ?? null,
+                );
+            }
+
             $seenIds[] = $ac->id;
         }
 
@@ -134,7 +150,10 @@ class AirConditionerController extends Controller
             : 0;
 
         // Rooms reading their temperature off a Gree unit depend on this sync.
-        Room::where('temp_source', 'ac')->get()->each->refreshCurrentTemp();
+        Room::where('temp_source', 'ac')->get()->each(function (Room $room) {
+            $room->refreshCurrentTemp();
+            $this->runs->sampleRoom($room);
+        });
 
         if ($changed || $wentOffline > 0) {
             event(new LiveReadingCreated(null));
