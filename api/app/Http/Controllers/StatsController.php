@@ -34,7 +34,9 @@ class StatsController extends Controller
         $to = now();
         $from = $to->copy()->subHours(self::RANGES[$range]);
 
-        $runs = ClimateRun::where('started_at', '<', $to)
+        // <=, not <: a run that began this very second is running now, and
+        // leaving it out hid a unit that had just switched on.
+        $runs = ClimateRun::where('started_at', '<=', $to)
             ->where(fn ($q) => $q->whereNull('ended_at')->orWhere('ended_at', '>', $from))
             ->get();
 

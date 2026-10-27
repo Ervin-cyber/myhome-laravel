@@ -201,8 +201,9 @@ class RoomStatsTest extends TestCase
             RoomTemperatureSample::create(['room_id' => $this->room('living')->id, 'value' => $value, 'sampled_at' => now()]);
         }
 
-        $this->assertSame(['min' => 20.0, 'max' => 22.0, 'avg' => 21.0], $this->statsFor('bedroom')['temperature']);
-        $this->assertSame(['min' => 25.0, 'max' => 27.0, 'avg' => 26.0], $this->statsFor('living')['temperature']);
+        // Equals, not Same: JSON has one number type, so 20.0 comes back as 20.
+        $this->assertEquals(['min' => 20.0, 'max' => 22.0, 'avg' => 21.0], $this->statsFor('bedroom')['temperature']);
+        $this->assertEquals(['min' => 25.0, 'max' => 27.0, 'avg' => 26.0], $this->statsFor('living')['temperature']);
     }
 
     public function test_a_unit_read_room_is_sampled_at_most_once_an_interval(): void
